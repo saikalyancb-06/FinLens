@@ -1,7 +1,13 @@
 fastapi>=0.100.0
 uvicorn[standard]>=0.22.0
 pydantic>=2.0.0
-sqlalchemy>=2.0.0
+# Pinned below 2.1: SQLAlchemy 2.1 changed the default DBAPI for a bare
+# `postgresql://` URL from psycopg2 to psycopg (v3), which is NOT installed here
+# (psycopg2-binary is). Without this cap a fresh install resolves 2.1.x and the
+# app fails at engine creation with "ModuleNotFoundError: No module named
+# 'psycopg'" against the production-style bare URL. Raise the cap only after
+# switching the driver dependency to psycopg[binary] and re-testing.
+sqlalchemy>=2.0.0,<2.1
 alembic>=1.11.0
 psycopg2-binary>=2.9.6
 pyjwt>=2.7.0
@@ -9,6 +15,12 @@ passlib[argon2,bcrypt]>=1.7.4
 python-multipart>=0.0.6
 pandas>=2.0.0
 openpyxl>=3.1.2
+# Required by pandas.read_html for the HTML-table-in-.xls path: many Indian
+# banks export an HTML table saved with a .xls extension, and the parser
+# (app/b2b/parsers, app/parsers) reads those via read_html, which needs an HTML
+# backend. Without lxml installed those statements parse to zero rows instead of
+# their real contents — a silent data-loss bug, not a crash.
+lxml>=5.0.0
 pdfplumber>=0.9.0
 pymupdf>=1.22.0
 pytesseract>=0.3.10
