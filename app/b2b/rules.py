@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
@@ -151,6 +152,13 @@ def _to_paise(value: Any, *, where: str, field_name: str) -> int:
     except (InvalidOperation, TypeError, ValueError):
         raise _fail(f"'{field_name}' must be a number.",
                     rule=where, field=field_name, received=repr(value))
+    # json.loads accepts the literal tokens Infinity/-Infinity/NaN, and both a
+    # non-finite comparison (`NaN < 0` signals) and the later int() would raise
+    # OUTSIDE the guards above and surface as a 500. Reject them here as the 400
+    # they are — and before `d < 0`, because comparing a NaN raises.
+    if not d.is_finite():
+        raise _fail(f"'{field_name}' must be a finite number.",
+                    rule=where, field=field_name, received=str(value))
     if d < 0:
         raise _fail(f"'{field_name}' must not be negative; amounts are compared "
                     f"as magnitudes and direction is matched separately with "
@@ -215,15 +223,21 @@ def _compile_regex(pattern: Any, flags_raw: Any, *, where: str) -> "re.Pattern[s
         raise _fail(f"'regex' exceeds {MAX_REGEX_LENGTH} characters.",
                     rule=where, field="regex")
 
-    flags = re.IGNORECASE          # case-insensitive by default, like every
-                                   # other matcher here
+    # IGNORECASE is ALWAYS on, and regex_flags only ADDS to it. Every other
+    # matcher here is case-insensitive (terms are upper-cased), and the pattern
+    # runs against the raw, mixed-case narration. Letting regex_flags reset the
+    # flag set to zero — the previous behaviour — meant a caller adding `s` for
+    # DOTALL silently lost case-insensitivity, so a lowercase pattern quietly
+    # stopped matching an upper-case narration. A silent non-match is exactly
+    # the failure this endpoint must not have, and case-sensitive matching of
+    # bank text is not a use case worth that risk.
+    flags = re.IGNORECASE
     if flags_raw is not None:
         if not isinstance(flags_raw, str):
-            raise _fail("'regex_flags' must be a string, e.g. 'i' or 'is'.",
+            raise _fail("'regex_flags' must be a string, e.g. 's' or 'sm'.",
                         rule=where, field="regex_flags")
         mapping = {"i": re.IGNORECASE, "s": re.DOTALL, "m": re.MULTILINE,
                    "x": re.VERBOSE}
-        flags = 0
         for ch in flags_raw.strip().lower():
             if ch not in mapping:
                 raise _fail(f"unknown regex flag '{ch}'; supported flags are "
@@ -428,6 +442,11 @@ def _parse_rule(raw: Any, index: int) -> Rule:
     priority = raw.get("priority", DEFAULT_PRIORITY)
     if isinstance(priority, bool) or not isinstance(priority, (int, float)):
         raise _fail("'priority' must be a number.", rule=where, field="priority")
+    # Infinity/NaN (accepted by json.loads) would make int() raise a 500; a
+    # non-finite priority is meaningless as a rank anyway.
+    if isinstance(priority, float) and not math.isfinite(priority):
+        raise _fail("'priority' must be a finite number.",
+                    rule=where, field="priority", received=str(priority))
     priority = int(priority)
 
     catch_all = bool(raw.get("catch_all", False))
@@ -722,23 +741,29 @@ class Decision:
 
 def classify_one(ruleset: RuleSet, txn: Any,
                  subject: Optional[_Subject] = None) -> Decision:
-    """Apply a ruleset to one transaction.
+    """Apply the caller's rules to one transaction: METHOD_RULE, or METHOD_NONE.
+
+    The fallback chain — the built-in classifier, then `default_category` — is
+    deliberately NOT applied here. It lives in `app/b2b/classify_service.py` so
+    the precedence *rule → builtin → default → none* has a single home, and so
+    this function stays a pure statement about the ruleset that is testable
+    without the ML stack. (An earlier version applied `default_category` here,
+    which made a row with a default come back as METHOD_DEFAULT and silently
+    suppressed the built-in fallback for it.)
 
     Every rule is evaluated and the winner is the highest `priority`; ties break
     on the earlier position in the supplied array, so the result is reproducible
-    for a given ruleset and never depends on dict ordering. A tie between two
-    *different* categories is reported as `ambiguous` rather than silently
-    resolved, because that is a fault in the ruleset its author needs to see.
+    and never depends on dict ordering. A tie at the winning priority held by
+    ANY rule with a different category is reported as `ambiguous` — that is a
+    ruleset fault its author needs to see, so it is surfaced rather than
+    silently resolved.
 
-    `stop: true` on a rule short-circuits evaluation the moment it matches. That
-    is the one place first-match semantics are available, and it is opt-in per
-    rule.
+    `stop: true` short-circuits evaluation the moment such a rule matches: the
+    one place first-match semantics are available, opt-in per rule.
     """
     subject = subject or _subject_for(txn)
 
-    best: Optional[Tuple[Rule, List[str]]] = None
-    runner_up: Optional[Rule] = None
-
+    matches: List[Tuple[Rule, List[str]]] = []
     for rule in ruleset.rules:
         hits = evaluate_rule(rule, subject)
         if hits is None:
@@ -748,35 +773,32 @@ def classify_one(ruleset: RuleSet, txn: Any,
                 category=rule.category, method=METHOD_RULE, rule_id=rule.rule_id,
                 priority=rule.priority, matched_terms=hits, assign=dict(rule.assign),
                 explanation=_explain(rule, hits, stopped=True))
-        if best is None:
-            best = (rule, hits)
-            continue
-        current = best[0]
-        if (rule.priority, -rule.index) > (current.priority, -current.index):
-            runner_up = current
-            best = (rule, hits)
-        elif runner_up is None or rule.priority > runner_up.priority:
-            runner_up = rule
+        matches.append((rule, hits))
 
-    if best is None:
-        if ruleset.default_category:
-            return Decision(
-                category=ruleset.default_category, method=METHOD_DEFAULT,
-                explanation="No rule matched; 'default_category' applied.")
-        return Decision(
-            category=None, method=METHOD_NONE,
-            explanation="No rule matched and no 'default_category' was supplied.")
+    if not matches:
+        return Decision(category=None, method=METHOD_NONE,
+                        explanation="No caller rule matched.")
 
-    rule, hits = best
-    ambiguous = (runner_up is not None
-                 and runner_up.priority == rule.priority
-                 and runner_up.category != rule.category)
+    # Highest priority wins; ties break on the earliest position. The sort key
+    # is unique per rule (index differs), so there is exactly one winner and no
+    # dependence on iteration order.
+    winner, hits = max(matches, key=lambda m: (m[0].priority, -m[0].index))
+
+    # Ambiguous when ANY other matching rule sits at the winner's priority with a
+    # different category. Scanning every contender — rather than tracking a
+    # single running runner-up — is what makes this order-independent: with a
+    # same-category rule between the winner and a different-category one, a
+    # running runner-up would latch onto the first and never see the conflict.
+    contenders = [r for r, _ in matches
+                  if r.priority == winner.priority and r.category != winner.category]
+    runner_up = contenders[0] if contenders else None
+
     return Decision(
-        category=rule.category, method=METHOD_RULE, rule_id=rule.rule_id,
-        priority=rule.priority, matched_terms=hits, assign=dict(rule.assign),
-        ambiguous=ambiguous,
-        runner_up_rule_id=runner_up.rule_id if ambiguous else None,
-        explanation=_explain(rule, hits, ambiguous_with=runner_up if ambiguous else None))
+        category=winner.category, method=METHOD_RULE, rule_id=winner.rule_id,
+        priority=winner.priority, matched_terms=hits, assign=dict(winner.assign),
+        ambiguous=bool(runner_up),
+        runner_up_rule_id=runner_up.rule_id if runner_up else None,
+        explanation=_explain(winner, hits, ambiguous_with=runner_up))
 
 
 def _explain(rule: Rule, hits: Sequence[str], *, stopped: bool = False,

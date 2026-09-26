@@ -803,3 +803,100 @@ def test_temp_directory_is_not_leaked(client, headers):
     _post(client, headers, rules=_RULES,
           content=b"Date,Narration,Debit,Credit,Balance\n")
     assert set(glob.glob(pattern)) == before
+
+
+# ---------------------------------------------------------------- review fixes
+#
+# One test per bug found in the post-implementation code review. Each fails
+# against the code as first written and passes after the fix.
+
+def test_builtin_fallback_runs_even_when_default_category_is_set(client, headers):
+    """fallback:builtin must be consulted BEFORE default_category, not skipped.
+
+    Regression: classify_one applied default_category itself, so an unmatched
+    row was stamped 'default' before the built-in classifier was ever tried, and
+    a ruleset with both settings silently never used the built-in engine.
+    """
+    rules = {"rules": [{"id": "food", "category": "MyFood",
+                        "match": {"any_of": ["SWIGGY"]}}],
+             "fallback": "builtin",
+             "default_category": "CatchAll"}
+    payload = _post(client, headers, rules=rules).json()
+    methods = payload["summary"]["by_method"]
+    # The built-in classifier must have decided at least one row; without the
+    # fix every unmatched row is 'default' and 'builtin' never appears.
+    assert methods.get("builtin", 0) >= 1, methods
+    # And default_category is still the last resort for rows the built-in also
+    # abstained on — so both mechanisms coexist.
+    builtin_rows = [r for r in payload["data"]["transactions"]
+                    if r["classification"]["method"] == "builtin"]
+    assert all("built-in taxonomy" in r["classification"]["explanation"]
+               for r in builtin_rows)
+
+
+def test_ambiguity_is_detected_regardless_of_rule_order(client, headers):
+    """A same-priority different-category conflict is reported even when a
+    same-priority same-category rule sits between winner and conflict.
+
+    Regression: a single running 'runner_up' latched onto the first equal rule
+    and a strict '>' comparison never let the later, different-category rule
+    replace it, so the conflict went unreported for this ordering only.
+    """
+    rules = {"rules": [
+        {"id": "a0", "category": "Alpha", "priority": 100, "match": {"any_of": ["SWIGGY"]}},
+        {"id": "a1", "category": "Alpha", "priority": 100, "match": {"any_of": ["SWIGGY"]}},
+        {"id": "b0", "category": "Beta", "priority": 100, "match": {"any_of": ["SWIGGY"]}},
+    ], "default_category": "None"}
+    payload = _post(client, headers, rules=rules).json()
+    row = _by_description(payload)["UPI-SWIGGY-ORDER-8821"]
+    assert row["category"] == "Alpha"          # earliest at top priority wins
+    assert row["classification"]["ambiguous"] is True
+    assert row["classification"]["runner_up_rule_id"] == "b0"
+    assert payload["summary"]["ambiguous_count"] >= 1
+
+
+def test_non_finite_numbers_are_rejected_as_400_not_500(client, headers):
+    """Infinity/NaN (which json.loads accepts) must be INVALID_RULES, not a 500.
+
+    Regression: these reached int()/Decimal comparisons outside the guarded
+    blocks and raised unhandled exceptions, which the ApiError handler could not
+    render — the caller got a bare 500 for a malformed ruleset.
+    """
+    for field_json in ('{"id":"x","category":"C","priority":Infinity,"match":{"any_of":["X"]}}',
+                       '{"id":"x","category":"C","priority":NaN,"match":{"any_of":["X"]}}',
+                       '{"id":"x","category":"C","match":{"min_amount":Infinity,"any_of":["X"]}}',
+                       '{"id":"x","category":"C","match":{"max_amount":NaN,"any_of":["X"]}}'):
+        res = _post(client, headers, rules='{"rules":[' + field_json + ']}')
+        assert res.status_code == 400, f"{field_json} -> {res.status_code}"
+        assert res.json()["error"]["code"] == "INVALID_RULES"
+
+
+def test_event_type_is_returned_not_silently_dropped(client, headers):
+    """event_type is advertised as settable, so it must appear in the response.
+
+    Regression: CanonicalTxn.to_api() does not emit event_type, so a rule that
+    set it validated, applied, and then vanished from the output.
+    """
+    rules = {"rules": [{"id": "sub", "category": "Software",
+                        "match": {"any_of": ["SWIGGY"]},
+                        "set": {"event_type": "SUBSCRIPTION",
+                                "counterparty": "Swiggy"}}],
+             "default_category": "Other"}
+    payload = _post(client, headers, rules=rules).json()
+    row = _by_description(payload)["UPI-SWIGGY-ORDER-8821"]
+    assert row["event_type"] == "SUBSCRIPTION"
+    assert row["counterparty"] == "Swiggy"      # a native field still works too
+
+
+def test_regex_flags_do_not_disable_case_insensitivity(client, headers):
+    """Supplying regex_flags must ADD to case-insensitivity, never replace it.
+
+    Regression: regex_flags reset the flag set to 0, so a lowercase pattern with
+    flags='s' silently stopped matching an uppercase narration.
+    """
+    rules = {"rules": [{"id": "r", "category": "Food",
+                        "match": {"regex": "swiggy", "regex_flags": "s"}}],
+             "default_category": "Other"}
+    payload = _post(client, headers, rules=rules).json()
+    # The narration is 'UPI-SWIGGY-ORDER-8821' (uppercase); the pattern is lower.
+    assert _by_description(payload)["UPI-SWIGGY-ORDER-8821"]["category"] == "Food"

@@ -64,6 +64,15 @@ logger = logging.getLogger("b2b.classify")
 #: copy of the statement.
 UNMATCHED_SAMPLE_LIMIT = 25
 
+#: The settable fields that `CanonicalTxn.to_api()` already surfaces from the
+#: row object, so writing them onto the row is enough for them to reach the
+#: response. Anything settable but NOT here (today: `event_type`, which
+#: CanonicalTxn does not carry) must be added to the row explicitly, or it is
+#: validated, advertised in the schema, and then silently dropped.
+_NATIVE_ASSIGN_FIELDS = frozenset({
+    "category_path", "counterparty", "merchant", "flow_type", "transaction_method",
+})
+
 
 @dataclass
 class ClassifyOutcome:
@@ -83,8 +92,10 @@ def _period(txns: List[CanonicalTxn]) -> Dict[str, Any]:
             "end": max(t.txn_date for t in dated).isoformat()}
 
 
-def _apply(txn: CanonicalTxn, decision: Decision) -> Optional[List[str]]:
-    """Write a decision onto a canonical row. Returns any tags the rule set.
+def _apply(txn: CanonicalTxn, decision: Decision) -> Dict[str, Any]:
+    """Write a decision onto a canonical row. Returns fields to merge into the
+    response row that `to_api()` does not itself emit (tags, and any settable
+    field CanonicalTxn does not carry).
 
     Only `category`, `category_path` and the descriptive fields in
     `rules.SETTABLE_FIELDS` are touched. Amounts, dates, balance and direction
@@ -113,18 +124,24 @@ def _apply(txn: CanonicalTxn, decision: Decision) -> Optional[List[str]]:
     txn.requires_review = bool(txn.requires_review) or decision.method in (
         METHOD_NONE, METHOD_DEFAULT)
 
-    tags: Optional[List[str]] = None
+    extras: Dict[str, Any] = {}
     for key, value in (decision.assign or {}).items():
         if key == "tags":
-            tags = list(value)
-            continue
-        setattr(txn, key, value)
+            extras["tags"] = list(value)
+        elif key in _NATIVE_ASSIGN_FIELDS:
+            # to_api() reads these off the row, so setting them is enough.
+            setattr(txn, key, value)
+        else:
+            # A settable field CanonicalTxn.to_api() does not emit (event_type).
+            # Carried out to the row here so an advertised field is not silently
+            # dropped from the response.
+            extras[key] = value
 
     # A rule that named a category but no path still gets a usable path, so a
     # caller grouping on `category_path` does not see nulls for half its rows.
     if decision.category and not txn.category_path:
         txn.category_path = decision.category
-    return tags
+    return extras
 
 
 def _builtin_decision(txn: CanonicalTxn) -> Decision:
@@ -162,6 +179,39 @@ def _builtin_decision(txn: CanonicalTxn) -> Decision:
                      f"confidence={result.classification_confidence:.2f}). "
                      f"This name is from the built-in taxonomy, not your ruleset."),
     )
+
+
+def _resolve_unmatched(ruleset: RuleSet, txn: CanonicalTxn, want_builtin: bool,
+                       none_decision: Decision) -> Decision:
+    """The fallback chain for a row no caller rule matched.
+
+    Precedence, in one place: built-in classifier (if the caller asked for it),
+    then `default_category` (if supplied), then an honest 'none'. Keeping this
+    here — rather than half in `classify_one` — is what fixes the bug where
+    setting `default_category` alongside `fallback: builtin` suppressed the
+    built-in step entirely, because the row was already stamped 'default' before
+    the built-in was ever consulted.
+    """
+    tried_builtin = False
+    if want_builtin:
+        builtin = _builtin_decision(txn)
+        if builtin.category:
+            return builtin
+        tried_builtin = True
+    if ruleset.default_category:
+        why = ("No caller rule matched and the built-in classifier abstained; "
+               "'default_category' applied.") if tried_builtin else \
+              "No caller rule matched; 'default_category' applied."
+        return Decision(category=ruleset.default_category, method=METHOD_DEFAULT,
+                        explanation=why)
+    if tried_builtin:
+        # Report the built-in attempt honestly rather than echoing classify_one's
+        # bare "no caller rule matched".
+        return Decision(
+            category=None, method=METHOD_NONE,
+            explanation="No caller rule matched and the built-in classifier "
+                        "abstained.")
+    return none_decision
 
 
 def run_classification(ingested: IngestedFile,
@@ -228,19 +278,10 @@ def run_classification(ingested: IngestedFile,
 
     for txn in txns:
         decision = classify_one(ruleset, txn)
+        if decision.method == METHOD_NONE:
+            decision = _resolve_unmatched(ruleset, txn, want_builtin, decision)
 
-        if decision.method == METHOD_NONE and want_builtin:
-            # The caller's rules had no opinion, so ours are consulted. A
-            # `default_category` is applied only if this also abstains, which is
-            # why the built-in attempt happens before the default is considered.
-            decision = _builtin_decision(txn)
-            if decision.method == METHOD_NONE and ruleset.default_category:
-                decision = Decision(
-                    category=ruleset.default_category, method=METHOD_DEFAULT,
-                    explanation="No rule matched and the built-in classifier "
-                                "abstained; 'default_category' applied.")
-
-        tags = _apply(txn, decision)
+        extras = _apply(txn, decision)
 
         if decision.method == METHOD_RULE:
             rule_hits[decision.rule_id] += 1
@@ -269,8 +310,7 @@ def run_classification(ingested: IngestedFile,
         if include_transactions:
             row = txn.to_api()
             row["classification"] = decision.to_api()
-            if tags:
-                row["tags"] = tags
+            row.update(extras)
             rows.append(row)
 
     # -- 4. assemble ------------------------------------------------------

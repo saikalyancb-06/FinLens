@@ -516,9 +516,11 @@ def classify_schema() -> Dict[str, Any]:
                 "none_of": "string or array. A veto: if any term appears, the "
                            "rule does not fire.",
                 "regex": "optional regular expression, matched against the RAW "
-                         "narration (case-insensitive unless regex_flags says "
-                         f"otherwise). Max {rulespec.MAX_REGEX_LENGTH} chars.",
-                "regex_flags": "optional subset of 'ismx'.",
+                         "narration. Always case-insensitive. Max "
+                         f"{rulespec.MAX_REGEX_LENGTH} chars.",
+                "regex_flags": "optional subset of 'smx' (DOTALL, MULTILINE, "
+                               "VERBOSE) — these ADD to the always-on "
+                               "case-insensitivity; they cannot turn it off.",
                 "direction": "optional 'debit' or 'credit'.",
                 "min_amount": "optional number in major units, compared against "
                               "the row's magnitude.",

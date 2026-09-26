@@ -206,9 +206,12 @@ Normalisation strips reference numbers and long digit runs, so a term containing
 digits would otherwise be unfindable even though it is plainly in the text.
 
 `regex` is different: it is matched against the **raw, unmodified** narration,
-because a regex author wants full control of the string. It is
-case-insensitive unless `regex_flags` says otherwise, and is applied to the
-first 2000 characters.
+because a regex author wants full control of the string. It is **always
+case-insensitive** and is applied to the first 2000 characters. `regex_flags`
+accepts a subset of `smx` (DOTALL, MULTILINE, VERBOSE) which *add* to that
+case-insensitivity — they cannot switch it off, because a lowercase pattern
+that silently stopped matching an uppercase narration is exactly the kind of
+invisible wrong answer this service avoids.
 
 `none_of` is a **veto**: if any of its terms matches, the rule does not fire,
 regardless of how much else matched.
