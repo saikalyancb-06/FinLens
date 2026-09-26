@@ -57,6 +57,11 @@ mlmodel/models_newsheet_eval/
 mlmodel/__pycache__/
 mlmodel/.pytest_cache/
 mlmodel/predictions_data.js
+# Removed from the repo: it was unused by any code and carried a
+# production hostname and password-shaped fields. Kept ignored so a
+# local copy can never be committed again. Real DB config comes from
+# DATABASE_URL in the environment.
+mlmodel/config.json
 
 # ─── PDF / documents uploaded during dev ─────────────────────────────────────
 *.pdf

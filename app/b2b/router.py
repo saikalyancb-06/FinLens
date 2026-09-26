@@ -28,7 +28,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.b2b import errors, ingest, metering, ratelimit, webhooks
-from app.b2b.auth import AuthContext, api_key_auth, require_scope
+from app.b2b.auth import (
+    AuthContext, api_key_auth, require_any_scope, require_scope,
+)
 from app.b2b.detect import detect_format
 from app.b2b.errors import ApiError
 from app.b2b.idempotency import (
@@ -37,6 +39,9 @@ from app.b2b.idempotency import (
 )
 from app.b2b.models import AnalysisRequest, RequestStatus
 from app.b2b.parsers.registry import SUPPORTED_FORMATS, UNSUPPORTED_FORMATS
+from app.b2b.classify_service import run_classification
+from app.b2b.rules import load_ruleset
+from app.b2b import rules as rulespec
 from app.b2b.service import run_analysis
 from app.config import settings
 from app.database.session import SessionLocal, get_db
@@ -48,6 +53,11 @@ router = APIRouter(prefix="/v1", tags=["Financial Analysis API"])
 API_VERSION = "1.0.0"
 SCOPE_WRITE = "analyze:write"
 SCOPE_READ = "analyze:read"
+#: Classification is a narrower capability than full financial analysis, so it
+#: gets its own scope and an operator can issue a key that may classify and
+#: nothing else. `analyze:write` is accepted as well, because it is strictly
+#: the broader grant and every key issued before this endpoint existed has it.
+SCOPE_CLASSIFY = "classify:write"
 
 MAX_UPLOAD_BYTES = int(os.getenv("B2B_MAX_FILE_SIZE_BYTES",
                                  str(getattr(settings, "MAX_FILE_SIZE_BYTES",
@@ -446,3 +456,219 @@ def usage(days: int = 30,
     return {"client": ctx.client.slug, "period_days": days,
             "since": since.isoformat(), "until": until.isoformat(),
             **metering.usage_summary(db, ctx.client.id, since, until)}
+
+
+# -------------------------------------------------------------------- classify
+#
+# The statement-classification service: the caller sends a statement AND the
+# rules to classify it by, and gets the classified rows back. See
+# `app/b2b/classify_service.py` for why this is its own endpoint rather than a
+# flag on /v1/analyze, and `app/b2b/rules.py` for the rule semantics.
+
+
+@router.get("/classify/schema", summary="The classification ruleset format")
+def classify_schema() -> Dict[str, Any]:
+    """The rules contract, served from the same constants that enforce it.
+
+    Generated rather than written out, so a limit can never be documented here
+    as one value and applied in `app/b2b/rules.py` as another. An integrator
+    generating rulesets programmatically can read its caps from this endpoint
+    instead of hardcoding them.
+    """
+    return {
+        "version": "1.0",
+        "content_type": "multipart/form-data; the ruleset goes in the 'rules' "
+                        "form field as a JSON string",
+        "top_level": {
+            "rules": "array of rule objects. Required. May be empty only when "
+                     "fallback is 'builtin'.",
+            "default_category": "optional string. Applied to any row no rule "
+                                "matched. Omit it to have those rows come back "
+                                "with category null.",
+            "fallback": {
+                "values": list(rulespec.FALLBACK_MODES),
+                "default": rulespec.FALLBACK_NONE,
+                "builtin": "run the built-in hybrid classifier on rows your "
+                           "rules did not match. Those rows come back with "
+                           "method 'builtin' and a category from the BUILT-IN "
+                           "taxonomy, not yours.",
+            },
+            "version": "optional string, echoed back in metadata.ruleset_version",
+        },
+        "rule": {
+            "id": "optional string, unique within the ruleset. Defaults to "
+                  "'rule_<index>'. Echoed on every row it classifies and in "
+                  "summary.rule_usage.",
+            "category": "required string. Opaque — it is echoed exactly as "
+                        "given and is never validated against any taxonomy.",
+            "priority": f"optional integer, default {rulespec.DEFAULT_PRIORITY}. "
+                        f"Highest wins. Ties break on the earlier position in "
+                        f"the array, and a tie between different categories is "
+                        f"reported as ambiguous.",
+            "stop": "optional boolean. When a rule with stop:true matches, "
+                    "evaluation ends there — opt-in first-match semantics.",
+            "catch_all": "optional boolean. Required to be true for a rule with "
+                         "no conditions, so that matching every row is always "
+                         "deliberate.",
+            "match": {
+                "any_of": "string or array. At least one term must appear.",
+                "all_of": "string or array. Every term must appear.",
+                "none_of": "string or array. A veto: if any term appears, the "
+                           "rule does not fire.",
+                "regex": "optional regular expression, matched against the RAW "
+                         "narration. Always case-insensitive. Max "
+                         f"{rulespec.MAX_REGEX_LENGTH} chars.",
+                "regex_flags": "optional subset of 'smx' (DOTALL, MULTILINE, "
+                               "VERBOSE) — these ADD to the always-on "
+                               "case-insensitivity; they cannot turn it off.",
+                "direction": "optional 'debit' or 'credit'.",
+                "min_amount": "optional number in major units, compared against "
+                              "the row's magnitude.",
+                "max_amount": "optional number in major units.",
+                "min_date": "optional ISO date, YYYY-MM-DD.",
+                "max_date": "optional ISO date, YYYY-MM-DD.",
+            },
+            "set": {
+                "settable_fields": list(rulespec.SETTABLE_FIELDS),
+                "note": "Amounts, dates, balances and direction are read from "
+                        "the statement and cannot be written by a rule.",
+            },
+        },
+        "term_matching": (
+            "A term matches when it appears as a whole word in the narration "
+            "(case-insensitive), in either the normalised or the raw form, or "
+            "when it appears as a run of characters inside a single token of at "
+            f"least {rulespec.MIN_EMBEDDED_TERM_LENGTH} characters — so "
+            "'NAMMAYATRI' matches 'UPI-NAMMAYATRI'."
+        ),
+        "strictness": (
+            "Unknown keys are rejected rather than ignored. A typo'd condition "
+            "key would otherwise produce a rule that looks specific and matches "
+            "far more than intended."
+        ),
+        "limits": {
+            "max_rules": rulespec.MAX_RULES,
+            "max_ruleset_bytes": rulespec.MAX_RULES_JSON_BYTES,
+            "max_terms_per_clause": rulespec.MAX_TERMS_PER_CLAUSE,
+            "max_term_length": rulespec.MAX_TERM_LENGTH,
+            "max_regex_length": rulespec.MAX_REGEX_LENGTH,
+            "max_file_size_bytes": MAX_UPLOAD_BYTES,
+        },
+        "methods": {
+            rulespec.METHOD_RULE: "one of your rules matched",
+            rulespec.METHOD_BUILTIN: "the built-in classifier decided "
+                                     "(fallback='builtin')",
+            rulespec.METHOD_DEFAULT: "nothing matched; default_category applied",
+            rulespec.METHOD_NONE: "nothing matched and no default was supplied",
+        },
+        "example": {
+            "version": "2026.09.1",
+            "default_category": "Unclassified",
+            "fallback": "none",
+            "rules": [
+                {"id": "fuel", "category": "Fuel", "priority": 100,
+                 "match": {"any_of": ["INDIAN OIL", "IOCL", "HP PETRO"],
+                           "direction": "debit"},
+                 "set": {"category_path": "Transport > Fuel"}},
+                {"id": "payroll", "category": "Payroll", "priority": 110,
+                 "match": {"any_of": ["SALARY", "PAYROLL"],
+                           "direction": "debit", "min_amount": 5000}},
+                {"id": "bank-fees", "category": "Bank Charges", "priority": 90,
+                 "match": {"any_of": ["SERVICE CHARGE", "AMC", "SMS CHARGES"],
+                           "none_of": ["REVERSAL"], "max_amount": 2000}},
+            ],
+        },
+    }
+
+
+@router.post("/classify", summary="Classify a statement using supplied rules")
+async def classify_endpoint(
+    request: Request,
+    response: Response,
+    file: UploadFile = File(..., description="The statement file."),
+    rules: Optional[str] = Form(None, description="The ruleset, as JSON."),
+    currency: Optional[str] = Form(None),
+    pdf_password: Optional[str] = Form(None),
+    include_transactions: Optional[str] = Form(None),
+    include_unmatched_samples: Optional[str] = Form(None),
+    ctx: AuthContext = Depends(api_key_auth),
+    db: Session = Depends(get_db),
+):
+    require_any_scope(ctx, [SCOPE_CLASSIFY, SCOPE_WRITE])
+    rid = _request_id(request)
+
+    state = ratelimit.check_and_consume(ctx.client)
+    for k, v in ratelimit.headers_for(state).items():
+        response.headers[k] = v
+
+    if file is None or not getattr(file, "filename", None):
+        raise ApiError(errors.MISSING_FILE,
+                       "A file must be supplied in the 'file' form field.")
+
+    # The ruleset is validated BEFORE the upload is read. A bad ruleset is the
+    # commonest failure while an integrator is iterating, and there is no reason
+    # to stream 40 MB to disk only to reject the request on a typo in a rule.
+    ruleset = load_ruleset(rules)
+
+    currency_v = (currency or "INR").strip().upper()[:8]
+    want_txns = str(include_transactions or "true").lower() not in ("false", "0", "no")
+    want_samples = str(include_unmatched_samples or "true").lower() not in ("false", "0", "no")
+
+    max_bytes = ctx.client.max_file_size_bytes or MAX_UPLOAD_BYTES
+    tmp_dir = tempfile.mkdtemp(prefix="b2b_cls_")
+    ingested = None
+
+    try:
+        ingested = ingest.save_upload(file, max_bytes=max_bytes, tmp_dir=tmp_dir)
+        ingested.detected = detect_format(ingested.filename, ingested.head_bytes,
+                                          ingested.path)
+        try:
+            result = run_classification(
+                ingested, ruleset, request_id=rid,
+                password=pdf_password or None, currency=currency_v,
+                include_transactions=want_txns,
+                include_unmatched_samples=want_samples)
+        except ApiError as exc:
+            metering.record_usage(
+                db, ctx, endpoint="/v1/classify", method="POST",
+                status_code=exc.status_code, succeeded=False, request_id=rid,
+                error_code=exc.code, file_size_bytes=ingested.size_bytes,
+                detected_format=ingested.detected.format)
+            raise
+
+        metering.record_usage(
+            db, ctx, endpoint="/v1/classify", method="POST", status_code=200,
+            succeeded=True, request_id=rid, file_processed=True,
+            file_size_bytes=ingested.size_bytes,
+            detected_format=result.detected_format,
+            transaction_count=result.transaction_count,
+            duration_ms=result.duration_ms)
+
+        body: Dict[str, Any] = {
+            "request_id": rid,
+            "status": "completed",
+            "data": result.payload["data"],
+            "summary": result.payload["summary"],
+            "quality": result.payload["quality"],
+            "metadata": {
+                "currency": currency_v,
+                "detected_format": result.detected_format,
+                "filename": ingested.filename,
+                "api_version": API_VERSION,
+                "transaction_count": result.transaction_count,
+                "ruleset_version": ruleset.version,
+                "rule_count": len(ruleset.rules),
+                "fallback": ruleset.fallback,
+                "duration_ms": result.duration_ms,
+            },
+        }
+        return body
+
+    finally:
+        # Remove the whole per-request directory, not just the inner one.
+        # `ingest.save_upload` nests a uuid directory INSIDE tmp_dir and points
+        # `ingested.tmp_dir` at that inner one, so `ingest.cleanup` alone leaves
+        # an empty parent behind on every successful request. Removing the
+        # parent covers both, and is safe whether or not the upload succeeded.
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)

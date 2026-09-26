@@ -1,0 +1,46 @@
+{
+  "version": "example-1",
+  "default_category": "Unclassified",
+  "fallback": "none",
+  "rules": [
+    {
+      "id": "salary-in",
+      "category": "Salary / Income",
+      "priority": 110,
+      "match": { "any_of": ["SALARY", "PAYROLL", "WAGES"], "direction": "credit", "min_amount": 5000 },
+      "set": { "category_path": "Income > Salary" }
+    },
+    {
+      "id": "fuel",
+      "category": "Fuel",
+      "priority": 100,
+      "match": { "any_of": ["INDIAN OIL", "IOCL", "HP PETRO", "BHARAT PETRO", "SHELL"], "direction": "debit" },
+      "set": { "category_path": "Transport > Fuel" }
+    },
+    {
+      "id": "food-delivery",
+      "category": "Food & Beverage",
+      "priority": 100,
+      "match": { "any_of": ["SWIGGY", "ZOMATO"], "none_of": ["REFUND", "REVERSAL"] },
+      "set": { "category_path": "Opex > Staff Welfare", "event_type": "MEAL" }
+    },
+    {
+      "id": "vendor-neft",
+      "category": "Vendor Payment",
+      "priority": 80,
+      "match": { "regex": "^NEFT-[A-Z]{4}[0-9]{7}", "min_amount": 100000 }
+    },
+    {
+      "id": "bank-charges",
+      "category": "Bank Charges",
+      "priority": 90,
+      "match": { "any_of": ["SERVICE CHARGE", "AMC", "SMS CHARGES", "PROCESSING FEE"], "none_of": ["REVERSAL"], "max_amount": 5000 }
+    },
+    {
+      "id": "gst-tax",
+      "category": "Taxes & Statutory",
+      "priority": 100,
+      "match": { "any_of": ["GST", "TDS", "INCOME TAX", "ADVANCE TAX"] }
+    }
+  ]
+}
