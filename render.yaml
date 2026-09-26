@@ -1,0 +1,145 @@
+# Render Blueprint — the whole production deployment as code.
+#
+# `render.yaml` in the repository root is read by Render when you create a
+# Blueprint. It provisions the web service, the managed Postgres and the
+# managed Key Value (Redis-compatible) store together, and wires the
+# connection strings between them, so the deployment is reproducible rather
+# than a sequence of dashboard clicks nobody wrote down.
+#
+# Two values are deliberately NOT in this file and must be set in the
+# dashboard: see the `sync: false` entries at the bottom of envVars.
+
+services:
+  - type: web
+    name: treasury-lens
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # Free instances sleep after inactivity and are wiped; a disk cannot be
+    # attached to one. This service holds uploaded bank statements, so it needs
+    # a paid instance. `starter` is the smallest that supports a disk — raise it
+    # if PDF parsing of large statements gets memory-tight.
+    plan: starter
+    region: singapore
+    healthCheckPath: /health
+
+    # Uploaded statements and email attachments are written to UPLOAD_DIR and
+    # read back later — the PDF-password retry path and the re-parse scripts
+    # both reopen the stored file (app/api/files.py, app/statements/discovery.py).
+    # Without a disk, every deploy and every restart would silently empty the
+    # directory. Note a disk pins the service to ONE instance, which is correct
+    # here anyway: parsing runs as an in-process BackgroundTask and the rate
+    # limiter is a module-level dict.
+    disk:
+      name: treasury-uploads
+      mountPath: /app/uploads
+      sizeGB: 10
+
+    envVars:
+      # ---- Wiring, resolved by Render at deploy time ----------------------
+      - key: DATABASE_URL
+        fromDatabase:
+          name: treasury-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: treasury-keyvalue
+          property: connectionString
+
+      # ---- Production switches --------------------------------------------
+      # Turns on validate_security() in app/config.py, stops
+      # /auth/forgot-password returning the reset token in its body, makes the
+      # AA webhook require a signature, and makes the cache refuse the
+      # in-process fallback rather than serve figures another worker has
+      # already invalidated.
+      - key: ENVIRONMENT
+        value: production
+      # Alembic owns the schema here. See the bootstrap step in the runbook:
+      # a brand-new database is built once with this ON, then stamped.
+      - key: DB_AUTO_CREATE
+        value: "false"
+      # Render's load balancer terminates TLS and sets X-Forwarded-For, so the
+      # rate limiter can trust it. Setting this WITHOUT a proxy in front would
+      # let any client spoof the header and evade the limit.
+      - key: TRUST_PROXY_HEADERS
+        value: "true"
+      # /docs, /redoc and /openapi.json stay off in production.
+      - key: ENABLE_API_DOCS
+        value: "false"
+
+      # ---- Application settings -------------------------------------------
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "30"
+      - key: REFRESH_TOKEN_EXPIRE_DAYS
+        value: "7"
+      - key: UPLOAD_DIR
+        value: /app/uploads
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LOG_DIR
+        value: /app/logs
+      - key: CONFIDENCE_THRESHOLD
+        value: "0.80"
+      # RBI and the market rate API are outbound HTTPS calls made from the
+      # lifespan task. Leave on unless the deployment has no egress.
+      - key: FX_REFRESH_ENABLED
+        value: "true"
+
+      # ---- Set these in the Render dashboard -------------------------------
+      # `generateValue: true` has Render mint a strong random secret on first
+      # deploy and keep it — it never appears in this file or in git. Rotating
+      # it signs everyone out, so change it deliberately, not casually.
+      - key: JWT_SECRET_KEY
+        generateValue: true
+
+      # The public origin(s) the browser will load the app from. The UI is
+      # served by this same service, so this only matters if you add a separate
+      # frontend host. Replace the placeholder before the first deploy.
+      - key: ALLOWED_ORIGINS
+        sync: false
+
+      # OAuth client secrets for the Gmail / Microsoft mailbox connectors.
+      # `sync: false` means Render prompts for them and stores them encrypted;
+      # they are never committed. Leave them unset if you are not using email
+      # ingestion yet — the rest of the application starts without them.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: MICROSOFT_CLIENT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_SECRET
+        sync: false
+      - key: MICROSOFT_TENANT
+        sync: false
+      - key: MICROSOFT_REDIRECT_URI
+        sync: false
+
+  # Managed Redis-compatible cache. In production the application will NOT fall
+  # back to an in-process cache (app/services/cache.py::_memory_fallback_allowed)
+  # — with this absent it runs correct but uncached, recomputing every figure
+  # from Postgres. So this is a performance dependency, not a correctness one.
+  - type: keyvalue
+    name: treasury-keyvalue
+    plan: starter
+    region: singapore
+    # Cache entries are recomputable, so evicting the least-recently-used key
+    # under memory pressure is right; the alternative is write errors.
+    maxmemoryPolicy: allkeys-lru
+    # Reachable only from services in this Render account, never the internet.
+    ipAllowList: []
+
+databases:
+  - name: treasury-postgres
+    databaseName: treasury
+    user: treasury
+    plan: basic-256mb
+    region: singapore
+    # No public access: only services inside this Render account can connect.
+    # Add your own IP here temporarily if you need psql from a laptop.
+    ipAllowList: []

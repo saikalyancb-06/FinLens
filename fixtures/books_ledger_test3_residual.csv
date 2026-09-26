@@ -1,0 +1,4 @@
+Date,Particulars,Vch Type,Vch No.,Cheque/Ref No.,Debit,Credit
+15-03-2026,Test Supplier Payment,Payment,PMT-0301,CHQ-0301,,3000.00
+15-03-2026,Customer Receipt,Receipt,RCT-0302,DEP-0302,10000.00,
+,Closing Balance,,,,,

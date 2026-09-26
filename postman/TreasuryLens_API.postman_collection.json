@@ -1,0 +1,833 @@
+{
+  "info": {
+    "name": "Treasury Lens \u2014 Financial Analysis API (v1)",
+    "description": "B2B statement-analysis API.\n\nSETUP (in order):\n1. Start the server with B2B_ADMIN_TOKEN set.\n2. Run 'Admin > 1. Create client' \u2014 once.\n3. Run 'Admin > 2. Issue API key' \u2014 the secret is shown ONCE and is\n   saved automatically into the {{api_key}} variable by a test script.\n4. Everything under 'Analyze' now works.\n\nIn every Analyze request, click the 'file' row under Body > form-data\nand choose a file \u2014 Postman cannot store a file path in a collection.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "admin_token",
+      "value": "demo-admin-token-please-change-me"
+    },
+    {
+      "key": "client_slug",
+      "value": "creditlens"
+    },
+    {
+      "key": "api_key",
+      "value": ""
+    },
+    {
+      "key": "request_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health & discovery",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "health"
+              ]
+            },
+            "description": "Liveness. No auth."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('healthy', () => pm.expect(pm.response.json().status).to.eql('healthy'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/ready",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "ready"
+              ]
+            },
+            "description": "Dependency check. 503 if the database is down."
+          }
+        },
+        {
+          "name": "Version",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/version",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "version"
+              ]
+            },
+            "description": "API + ruleset version."
+          }
+        },
+        {
+          "name": "Supported formats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/formats",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "formats"
+              ]
+            },
+            "description": "The honest list, with per-format limitations, plus what we refuse and why."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "pm.test('csv supported', () => pm.expect(b.supported.map(f=>f.id)).to.include('csv'));",
+                  "console.log('Supported:', b.supported.map(f=>f.id).join(', '));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admin (run these first)",
+      "item": [
+        {
+          "name": "1. Create client",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-Token",
+                "value": "{{admin_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/internal/clients",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "internal",
+                "clients"
+              ]
+            },
+            "description": "Run once. A repeat returns 409 because the slug is taken \u2014 that is fine.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Credit Lens\",\n  \"slug\": \"{{client_slug}}\",\n  \"contact_email\": \"dev@creditlens.example\",\n  \"rate_limit_per_minute\": 120,\n  \"rate_limit_per_day\": 5000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('created or already exists', () => pm.expect([201,409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Issue API key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Admin-Token",
+                "value": "{{admin_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/internal/clients/{{client_slug}}/keys",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "internal",
+                "clients",
+                "{{client_slug}}",
+                "keys"
+              ]
+            },
+            "description": "The secret is shown ONCE. This request saves it into {{api_key}} for you.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "const secret = b.secret || b.api_key || (b.key && b.key.secret);",
+                  "pm.test('secret returned', () => pm.expect(secret).to.be.a('string'));",
+                  "if (secret) { pm.collectionVariables.set('api_key', secret);",
+                  "  console.log('Saved api_key:', secret.slice(0,16) + '...'); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List keys",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Token",
+                "value": "{{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/internal/clients/{{client_slug}}/keys",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "internal",
+                "clients",
+                "{{client_slug}}",
+                "keys"
+              ]
+            },
+            "description": "Prefixes and last-used only. Secrets are never retrievable."
+          }
+        },
+        {
+          "name": "Client usage",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Admin-Token",
+                "value": "{{admin_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/internal/clients/{{client_slug}}/usage",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "internal",
+                "clients",
+                "{{client_slug}}",
+                "usage"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "Analyze",
+      "item": [
+        {
+          "name": "Analyze \u2014 CSV / XLSX / PDF (basic)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/analyze",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "analyze"
+              ]
+            },
+            "description": "Attach ANY supported file in the 'file' row: .pdf .xlsx .xls .csv .tsv .txt .json .ofx .qfx .xml(CAMT.053).\n\nThe format is detected from CONTENT, so the extension does not have to be right.\n\nEnable pdf_password only for encrypted PDFs.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Pick your statement file here"
+                },
+                {
+                  "key": "country",
+                  "value": "IN",
+                  "type": "text"
+                },
+                {
+                  "key": "currency",
+                  "value": "INR",
+                  "type": "text"
+                },
+                {
+                  "key": "include_transactions",
+                  "value": "true",
+                  "type": "text",
+                  "disabled": true
+                },
+                {
+                  "key": "pdf_password",
+                  "value": "",
+                  "type": "text",
+                  "disabled": true
+                },
+                {
+                  "key": "async_mode",
+                  "value": "false",
+                  "type": "text",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.collectionVariables.set('request_id', b.request_id);",
+                  "pm.test('completed', () => pm.expect(b.status).to.eql('completed'));",
+                  "console.log('format:', b.metadata.detected_format,",
+                  "            '| txns:', b.metadata.transaction_count,",
+                  "            '| confidence:', b.quality.overall_confidence,",
+                  "            '|', b.quality.reconciliation_status);",
+                  "const inc = b.data.income;",
+                  "console.log('total credits:', inc.total_credits.value);",
+                  "console.log('salary:', JSON.stringify(inc.salary));",
+                  "pm.test('every INFERRED metric is honest about uncertainty', () => {",
+                  "  const walk = (n) => {",
+                  "    if (n && typeof n === 'object') {",
+                  "      if (n.source === 'INFERRED' && n.confidence != null)",
+                  "        pm.expect(n.confidence).to.be.below(1.0);",
+                  "      Object.values(n).forEach(walk);",
+                  "    } else if (Array.isArray(n)) n.forEach(walk);",
+                  "  }; walk(b.data);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Analyze \u2014 with loan (affordability)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/analyze",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "analyze"
+              ]
+            },
+            "description": "All three loan fields together, or none. Two of three is a 400 by design.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Pick your statement file here"
+                },
+                {
+                  "key": "country",
+                  "value": "IN",
+                  "type": "text"
+                },
+                {
+                  "key": "currency",
+                  "value": "INR",
+                  "type": "text"
+                },
+                {
+                  "key": "loan_amount",
+                  "value": "500000",
+                  "type": "text"
+                },
+                {
+                  "key": "interest_rate",
+                  "value": "12",
+                  "type": "text"
+                },
+                {
+                  "key": "tenure_months",
+                  "value": "60",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "console.log('proposed EMI:', b.data.loan.proposed_emi.value);",
+                  "console.log('affordability:', JSON.stringify(b.data.affordability));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Analyze \u2014 async (202 + poll)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/analyze",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "analyze"
+              ]
+            },
+            "description": "Returns 202 immediately. Then run 'Get result by request_id'.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Pick your statement file here"
+                },
+                {
+                  "key": "async_mode",
+                  "value": "true",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202', () => pm.response.to.have.status(202));",
+                  "pm.collectionVariables.set('request_id', pm.response.json().request_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Analyze \u2014 idempotent (send twice)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "postman-demo-001"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/analyze",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "analyze"
+              ]
+            },
+            "description": "Send this twice with the SAME file. The second returns the first result with header Idempotent-Replay: true, without reprocessing.\nSend it with a DIFFERENT file and the same key and you get 409.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Pick your statement file here"
+                },
+                {
+                  "key": "country",
+                  "value": "IN",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const replay = pm.response.headers.get('Idempotent-Replay');",
+                  "console.log('replay:', replay || 'no (first call)');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get result by request_id",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/analyze/{{request_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "analyze",
+                "{{request_id}}"
+              ]
+            },
+            "description": "Poll here for async. 410 once the result passes its retention window."
+          }
+        },
+        {
+          "name": "My usage",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/usage?days=30",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "usage?days=30"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error cases (should NOT be 200)",
+      "item": [
+        {
+          "name": "No API key -> 401",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/analyze",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "analyze"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Pick your statement file here"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));",
+                  "pm.test('MISSING_API_KEY', () => pm.expect(pm.response.json().error.code).to.eql('MISSING_API_KEY'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bad API key -> 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer kl_live_totally_made_up"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/analyze",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "analyze"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Pick your statement file here"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unsupported format (.zip) -> 415",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/analyze",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "analyze"
+              ]
+            },
+            "description": "Attach any .zip. Archives are refused at intake with a reason.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Pick your statement file here"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('415', () => pm.response.to.have.status(415));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Partial loan params -> 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/analyze",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "analyze"
+              ]
+            },
+            "description": "loan_amount without interest_rate/tenure_months. Deliberately rejected.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Pick your statement file here"
+                },
+                {
+                  "key": "loan_amount",
+                  "value": "500000",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));",
+                  "pm.test('INVALID_PARAMETER', () => pm.expect(pm.response.json().error.code).to.eql('INVALID_PARAMETER'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown request_id -> 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/analyze/req_does_not_exist",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "analyze",
+                "req_does_not_exist"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

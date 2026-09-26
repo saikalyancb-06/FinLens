@@ -1,0 +1,2439 @@
+/* styles.css - Black & White ERPNext-inspired design system */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+}
+
+:root {
+    --black: #000000;
+    --gray-900: #111111;
+    --gray-800: #333333;
+    --gray-600: #666666;
+    --gray-400: #999999;
+    --gray-200: #dddddd;
+    --gray-100: #f5f5f5;
+    --white: #ffffff;
+
+    /* These five were referenced throughout index.html (55 occurrences between
+       them) but never declared, so every rule using them silently did nothing —
+       undefined custom properties make the whole declaration invalid. Values are
+       chosen to sit on the existing ramp rather than introduce a new palette. */
+    --gray-700: #4d4d4d;
+    --gray-500: #808080;
+    --gray-300: #c4c4c4;
+    --primary-color: var(--black);
+    --primary: var(--black);
+
+    --border: 1px solid var(--gray-200);
+    --border-dark: 1px solid var(--gray-400);
+}
+
+body {
+    font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 10.5px;  /* public-page default; the app overrides it above */
+    line-height: 1.5;
+    color: var(--gray-800);
+    background: var(--white);
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--black);
+    margin-bottom: 0.75rem;
+}
+
+h1 { font-size: 1.35rem; letter-spacing: -0.5px; }
+h2 { font-size: 0.9rem; }
+h3 { font-size: 0.69rem; }
+h4 { font-size: 0.6rem; }
+
+a {
+    color: var(--black);
+    text-decoration: none;
+    transition: opacity 0.15s ease;
+}
+
+a:hover {
+    opacity: 0.75;
+}
+
+.mono-num, .stat-value, td.amount-cell, .amount-col {
+    font-family: 'JetBrains Mono', monospace !important;
+}
+
+/* Buttons */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 1.25rem;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.51rem;
+    font-weight: 600;
+    text-align: center;
+    border: 1px solid var(--black);
+    background: var(--white);
+    color: var(--black);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-decoration: none;
+}
+
+.btn:hover {
+    background: var(--gray-100);
+    opacity: 1;
+}
+
+.btn-primary {
+    background: var(--black);
+    color: var(--white);
+    border-color: var(--black);
+}
+
+.btn-primary:hover {
+    background: var(--gray-800);
+    border-color: var(--gray-800);
+}
+
+.btn-sm {
+    padding: 0.35rem 0.75rem;
+    font-size: 0.48rem;
+}
+
+.btn-lg {
+    padding: 0.75rem 2rem;
+    font-size: 0.57rem;
+}
+
+/* Forms */
+input, select, textarea {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.51rem;
+    border: 1px solid var(--gray-400);
+    background: var(--white);
+    color: var(--gray-900);
+    font-family: 'IBM Plex Sans', sans-serif;
+}
+
+input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--black);
+}
+
+label {
+    display: block;
+    margin-bottom: 0.35rem;
+    font-weight: 600;
+    font-size: 0.48rem;
+    color: var(--gray-600);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.form-group {
+    margin-bottom: 1.25rem;
+}
+
+/* Landing Page Header */
+.landing-header {
+    background: var(--white);
+    border-bottom: 2px solid var(--black);
+    padding: 0.85rem 0;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.landing-nav {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.landing-logo {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--black);
+    letter-spacing: -0.5px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.landing-menu {
+    display: flex;
+    gap: 2rem;
+    align-items: center;
+    list-style: none;
+}
+
+.landing-menu a {
+    font-weight: 600;
+    font-size: 0.54rem;
+    color: var(--gray-800);
+}
+
+.landing-menu a.active {
+    color: var(--black);
+    border-bottom: 2px solid var(--black);
+    padding-bottom: 2px;
+}
+
+/* Hero Section */
+.hero {
+    text-align: center;
+    padding: 5rem 2rem;
+    background: var(--gray-900);
+    color: var(--white);
+    border-bottom: 1px solid var(--black);
+}
+
+.hero h1 {
+    color: var(--white);
+    font-size: 1.65rem;
+    margin-bottom: 1rem;
+    max-width: 800px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.hero p {
+    font-size: 0.69rem;
+    color: var(--gray-400);
+    max-width: 750px;
+    margin: 0 auto 2.5rem;
+}
+
+.landing-section {
+    padding: 4rem 2rem;
+    border-bottom: var(--border);
+}
+
+.landing-container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+/* Feature Grid */
+.features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.5rem;
+    margin-top: 2.5rem;
+}
+
+.feature-card {
+    padding: 1.75rem;
+    border: 1px solid var(--gray-400);
+    background: var(--white);
+}
+
+.feature-card h3 {
+    margin-bottom: 0.5rem;
+    font-size: 0.66rem;
+}
+
+.feature-card p {
+    color: var(--gray-600);
+    font-size: 0.51rem;
+    line-height: 1.5;
+}
+
+/* Pricing Cards */
+.pricing-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 1.5rem;
+    margin-top: 2.5rem;
+}
+
+.pricing-card {
+    padding: 2rem 1.5rem;
+    border: 1px solid var(--gray-400);
+    background: var(--white);
+    text-align: center;
+}
+
+.pricing-card.featured {
+    border: 2px solid var(--black);
+    background: var(--gray-100);
+}
+
+.pricing-card .currency {
+    font-size: 0.51rem;
+    font-weight: 700;
+    color: var(--gray-600);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.5rem;
+}
+
+.pricing-card .price {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--black);
+    margin-bottom: 0.25rem;
+}
+
+.pricing-card .period {
+    font-size: 0.48rem;
+    color: var(--gray-600);
+    margin-bottom: 1.5rem;
+}
+
+/* Footer */
+.landing-footer {
+    background: var(--gray-900);
+    color: var(--gray-400);
+    padding: 2.5rem 2rem;
+    text-align: center;
+    font-size: 0.51rem;
+    border-top: 1px solid var(--black);
+}
+
+.landing-footer a {
+    color: var(--white);
+}
+
+/* Login Page */
+.login-container {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--gray-100);
+    padding: 2rem;
+}
+
+.login-box {
+    width: 100%;
+    max-width: 400px;
+    padding: 2.5rem;
+    background: var(--white);
+    border: 2px solid var(--black);
+}
+
+.login-box h2 {
+    text-align: center;
+    margin-bottom: 1.5rem;
+    font-size: 0.81rem;
+}
+
+/* Readability & Route Scaling
+   ---------------------------
+   Every size in this file is expressed in rem, so these two root values set the
+   scale of the entire interface. They were dropped to 100/120 of their previous
+   figures — the UI was rendering about a fifth larger than intended, which is
+   why so little fitted on a screen.
+
+   Two roots rather than one because the dashboard is deliberately denser than
+   the rest of the app: it packs five KPI tiles, ten control tiles and ten chart
+   panels onto one screen, where the other pages are mostly tables and forms
+   that need to stay readable.
+
+   THREE scales, because the marketing site and the application are different
+   products that happen to share a stylesheet:
+
+       public pages            root 21px  -> 21px      unchanged
+       reports / upload /
+         reconciliation        root 21px  -> 21px      unchanged
+       dashboard               root 16px  -> 20px      (125%)
+       rest of the app         root 21px  -> 26.25px   (125%)
+
+   The 125% is deliberate: the app was being read at 125% browser zoom because
+   the default was too small, and needing a browser zoom is a defect. This makes
+   it the default — but only once you are signed in. The landing, pricing,
+   contact and login pages are typographically designed and were never the
+   complaint, so they keep exactly the sizes they had.
+
+   The public scale is the UNCLASSED default on purpose. A page that forgets to
+   set a class renders at the safe, original size rather than at an app scale
+   that would be wrong for it.
+
+   If the app needs resizing again, change the four numbers below the default
+   and nothing else. Everything in this file is in rem and follows. */
+html {
+    font-size: 21px;
+}
+
+/* The sidebar is px, not rem, so it does not follow the root above. It is
+   shared chrome, and it has to match whichever page is on screen: the pages
+   kept at their original size get the original 156px back. */
+.sidebar { width: 156px; min-width: 156px; }
+
+body.app-dashboard .sidebar,
+body.app-inner .sidebar { width: 195px; min-width: 195px; }
+
+/* Signed in, on the dashboard — the densest screen in the product. */
+html.app-dashboard {
+    font-size: 20px;
+}
+
+body.app-dashboard {
+    font-size: 9.75px;
+}
+
+/* Signed in, everywhere else. */
+html.app-inner {
+    font-size: 26.25px;
+}
+
+body.app-inner {
+    font-size: 13.125px;
+}
+
+/* App Layout */
+.app-container {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+    background: var(--gray-100);
+}
+
+.sidebar {
+    width: 156px;
+    min-width: 156px;
+    background: var(--white);
+    color: var(--black);
+    border-right: 1px solid var(--gray-200);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+.sidebar-header {
+    padding: 11px 10px;
+    border-bottom: 1px solid var(--gray-200);
+    font-weight: 700;
+    font-size: 12px;
+    color: var(--black);
+    letter-spacing: -0.3px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sidebar-nav {
+    flex: 1;
+    overflow-y: auto;
+    padding: 5px 0;
+}
+
+.sidebar-nav a {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 10px;
+    color: var(--gray-700);
+    font-weight: 500;
+    /* 13px, up from 11px. The sidebar is deliberately in px rather than rem
+       (see the note above `.sidebar`), so this does not follow the root size
+       and does not move with the page. Width, padding, gap, border and
+       alignment are all unchanged.
+
+       13 and not 14 because of the narrowest case this rule has to survive.
+       `/reports`, `/ingestion` and `/reconciliation` are in the UNSCALED list
+       in index.html, so they carry neither `app-dashboard` nor `app-inner` and
+       the sidebar stays at the base 156px rather than 195px — a 132px text
+       box. On each of those pages the active item is also the longest label
+       for it, and `.sidebar-nav a.active` is font-weight 700. Bold
+       "Reports & CFO Pack" on `/reports` measures ~127px at 13px and ~137px at
+       14px, so 14 clips and 13 does not. `nowrap` below means an overflow here
+       would push the text under the main content, not wrap it, which is why
+       this is measured rather than estimated. */
+    font-size: 13px;
+    border-left: 3px solid transparent;
+    white-space: nowrap;
+}
+
+.sidebar-nav a:hover {
+    color: var(--black);
+    background: var(--gray-100);
+}
+
+.sidebar-nav a.active {
+    color: var(--black);
+    background: var(--gray-100);
+    border-left-color: var(--black);
+    font-weight: 700;
+}
+
+.sidebar-footer {
+    padding: 10px;
+    border-top: 1px solid var(--gray-200);
+    font-size: 9.6px;
+    color: var(--gray-600);
+}
+
+.sidebar-footer button {
+    background: none;
+    border: none;
+    color: var(--black);
+    cursor: pointer;
+    margin-top: 8px;
+    padding: 0;
+    text-decoration: underline;
+    /* Raised with the nav above so Sign Out does not read as a different
+       tier of control. The signed-in address on the line above keeps 9.6px:
+       it is an identifier, not an action, and a real address is long enough
+       that enlarging it is what would overflow this column. */
+    font-size: 12px;
+}
+
+.main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.topbar {
+    background: var(--white);
+    border-bottom: 1px solid var(--gray-200);
+    padding: 6px 12px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.topbar-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.topbar-group label {
+    margin: 0;
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+
+.topbar select, .topbar input {
+    width: auto;
+    min-width: 140px;
+    padding: 6px 10px;
+    font-size: 8.5px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    border: 1px solid var(--gray-400);
+}
+
+.topbar .btn {
+    font-size: 8px;
+    padding: 5px 12px;
+}
+
+.content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+    background: var(--gray-100);
+}
+
+.card {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    margin-bottom: 1.5rem;
+}
+
+.card-header {
+    padding: 0.85rem 1.25rem;
+    border-bottom: 1px solid var(--gray-200);
+    background: var(--white);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.card-header h3 {
+    margin: 0;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.card-body {
+    padding: 1.25rem;
+}
+
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.stat-card {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    padding: 1.25rem;
+}
+
+.stat-label {
+    font-size: 0.45rem;
+    font-weight: 700;
+    color: var(--gray-600);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.5rem;
+}
+
+.stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--black);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    line-height: 1.25;
+}
+
+.stat-change {
+    font-size: 0.45rem;
+    margin-top: 0.35rem;
+    color: var(--gray-600);
+}
+
+/* Responsive Layout Safeguards */
+.app-container {
+    display: flex;
+    height: 100vh;
+    width: 100%;
+    max-width: 100vw;
+    overflow: hidden;
+    background: var(--gray-100);
+}
+
+.sidebar {
+    width: 156px;
+    min-width: 156px;
+    flex-shrink: 0;
+    background: var(--white);
+    color: var(--black);
+    border-right: 1px solid var(--gray-200);
+    display: flex;
+    flex-direction: column;
+}
+
+.main-content {
+    flex: 1;
+    min-width: 0; /* Crucial flexchild shrink guard */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    width: 100%;
+}
+
+.content {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    overflow-x: hidden; /* Prevent body/content horizontal scrollbar */
+    padding: 8px 12px;
+    background: var(--gray-100);
+}
+
+.card {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    margin-bottom: 1.5rem;
+    width: 100%;
+    min-width: 0;
+}
+
+.card-body {
+    padding: 1.25rem;
+    min-width: 0;
+}
+
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 0;
+}
+
+/* Tables - ERP Theme & Responsive Column Behavior */
+table {
+    width: 100%;
+    table-layout: auto;
+    border-collapse: collapse;
+    background: var(--white);
+    font-size: 0.62rem;
+    border: 1px solid var(--gray-200);
+}
+
+thead {
+    background: var(--gray-900) !important;
+    color: var(--white) !important;
+}
+
+th {
+    background: var(--gray-900) !important;
+    color: var(--white) !important;
+    padding: 0.28rem 0.55rem;
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.54rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--black);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+td {
+    padding: 0.24rem 0.55rem;
+    border-bottom: 1px solid var(--gray-200);
+    color: var(--gray-800);
+    line-height: 1.2;
+    vertical-align: middle;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Specific Table Column Width Control */
+th.date-col, td.date-col {
+    width: 95px;
+    min-width: 85px;
+    white-space: nowrap;
+}
+
+th.account-col, td.account-col {
+    max-width: 180px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+th.desc-col, td.desc-col {
+    max-width: 320px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+th.cat-col, td.cat-col {
+    max-width: 220px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+th.conf-col, td.conf-col {
+    width: 75px;
+    min-width: 65px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+th.amount-col, td.amount-col, th.number-cell, td.number-cell {
+    font-family: 'JetBrains Mono', monospace;
+    text-align: right;
+    width: 100px;
+    min-width: 85px;
+    white-space: nowrap;
+}
+
+th.source-col, td.source-col {
+    width: 100px;
+    min-width: 85px;
+    white-space: nowrap;
+}
+
+.badge {
+    display: inline-block;
+    padding: 0.2em 0.5em;
+    font-size: 0.45rem;
+    font-weight: 600;
+    line-height: 1.2;
+    color: var(--white);
+    border-radius: 0.25rem;
+    background-color: var(--gray-600);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Transactions Table - strictly single line per row without wrapping */
+.transactions-table {
+    width: 100%;
+    table-layout: auto;
+}
+
+.transactions-table th,
+.transactions-table td {
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    /* Tightened from 0.24rem/0.55rem. This carries !important, so an
+       override appended later loses to it however specific it is — the
+       value has to change here. */
+    padding: 0.18rem 0.4rem !important;
+    line-height: 1.2 !important;
+    vertical-align: middle !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.transactions-table td.desc-col {
+    max-width: 380px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap !important;
+}
+
+.transactions-table td.account-col {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap !important;
+}
+
+.transactions-table td.cat-col {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap !important;
+}
+
+.transactions-table .badge {
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+}
+
+.transactions-table .txn-cat-path,
+.transactions-table .txn-cat-meta {
+    margin: 0 !important;
+    display: inline-flex !important;
+    align-items: center;
+    white-space: nowrap !important;
+}
+
+/* Success badge */
+.badge-ok {
+  background-color: #28a745; /* green */
+}
+
+/* Warning/Pending badge */
+.badge-warn {
+  background-color: #d97706; /* amber */
+}
+
+.badge-dark {
+    background: var(--black);
+    color: var(--white);
+    border-color: var(--black);
+}
+
+.w-full { width: 100%; }
+.mt-1 { margin-top: 0.5rem; }
+.mt-2 { margin-top: 1rem; }
+.mb-1 { margin-bottom: 0.5rem; }
+.mb-2 { margin-bottom: 1rem; }
+.flex { display: flex; }
+.flex-between { justify-content: space-between; }
+.flex-center { align-items: center; }
+.gap-1 { gap: 0.5rem; }
+.gap-2 { gap: 1rem; }
+
+/* -------------------------------------------------------------------------
+   COMPREHENSIVE RESPONSIVE DESIGN SYSTEM & BREAKPOINTS
+   Supports: 1920, 1600, 1440, 1366, 1280, 1024, 768, 600, 480, 375, 320
+   ------------------------------------------------------------------------- */
+
+/* Modals Safeguards */
+.modal-overlay, [style*="position: fixed"], [style*="position: 'fixed'"] {
+    max-width: 100vw;
+    box-sizing: border-box;
+}
+
+.category-mix-combined-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    align-items: center;
+}
+
+@media screen and (max-width: 900px) {
+    .category-mix-combined-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Base Topbar Styling */
+.topbar {
+    background: var(--white);
+    border-bottom: 1px solid var(--gray-200);
+    padding: 6px 12px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* Viewport Guards */
+html, body {
+    max-width: 100vw;
+    overflow-x: hidden;
+}
+
+/* -------------------------------------------------------------------------
+   RESPONSIVE MEDIA QUERIES
+   ------------------------------------------------------------------------- */
+
+/* Tablet & Smaller (<= 1024px) */
+@media screen and (max-width: 1024px) {
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .topbar {
+        padding: 6px 10px;
+        gap: 0.6rem;
+    }
+
+    .topbar-group {
+        flex: 1 1 calc(50% - 0.6rem);
+        min-width: 180px;
+    }
+
+    .topbar select, .topbar input {
+        width: 100%;
+    }
+
+    .content {
+        padding: 6px 8px;
+    }
+}
+
+/* Mobile & Tablet Layout Adjustments (<= 768px) */
+@media screen and (max-width: 768px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .topbar-group {
+        flex: 1 1 100%;
+        min-width: 100%;
+    }
+
+    .card-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+
+    .card-header .btn-group, .card-header div {
+        width: 100%;
+        display: flex;
+        flex-wrap: wrap;
+    }
+
+    /* Modal Responsive Bounds */
+    div[style*="position: fixed"] > div, div[style*="position: 'fixed'"] > div {
+        width: 95% !important;
+        max-width: 95vw !important;
+        max-height: 90vh !important;
+        overflow-y: auto !important;
+        padding: 1.25rem !important;
+        margin: 0 auto !important;
+    }
+}
+
+/* Small Mobile Devices (<= 480px) */
+@media screen and (max-width: 480px) {
+    h1 { font-size: 0.96rem; }
+    h2 { font-size: 0.75rem; }
+    h3 { font-size: 0.6rem; }
+
+    .content {
+        padding: 0.75rem 0.5rem;
+    }
+
+    .card-body {
+        padding: 0.85rem;
+    }
+
+    .stat-card {
+        padding: 0.85rem;
+    }
+
+    .stat-value {
+        font-size: 0.81rem;
+    }
+
+    .btn {
+        width: 100%;
+        margin-bottom: 0.35rem;
+    }
+
+    .btn-sm {
+        width: auto;
+    }
+
+    /* Login Box */
+    .login-box {
+        padding: 1.5rem 1rem;
+    }
+}
+
+
+
+/* ===================================================================
+   Dense dashboard: one-line KPI strip, anomaly / policy panels, rules
+   =================================================================== */
+
+/* The tiles used to be a 210px auto-fit grid that wrapped onto three rows.
+   This keeps every tile on one line and lets it scroll horizontally rather
+   than wrap, so the strip reads as a single band of numbers. Type is ~60% of
+   the old stat-card sizing throughout. */
+.kpi-strip {
+    display: flex;
+    gap: 0;
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--gray-200);
+    background: var(--white);
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.kpi {
+    flex: 1 1 0;
+    min-width: 104px;
+    padding: 0.4rem 0.55rem;
+    border-right: 1px solid var(--gray-200);
+    line-height: 1.2;
+}
+
+.kpi:last-child { border-right: none; }
+
+.kpi-label {
+    font-size: 0.45rem;
+    font-weight: 700;
+    color: var(--gray-600);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.kpi-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--black);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 0.1rem;
+}
+
+.kpi-sub {
+    font-size: 0.45rem;
+    color: var(--gray-600);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 0.05rem;
+}
+
+.kpi-value.is-critical { color: #b00020; }
+.kpi-value.is-warn     { color: #8a6d00; }
+.kpi-value.is-good     { color: #0a6b2d; }
+
+/* Denser chart row: three charts across instead of one wide one */
+.chart-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.chart-box {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    padding: 0.5rem 0.6rem;
+    min-width: 0;
+}
+
+.chart-box h4 {
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--gray-600);
+    margin: 0 0 0.35rem 0;
+}
+
+.chart-canvas-wrap { position: relative; height: 150px; }
+.chart-canvas-wrap.tall { height: 200px; }
+
+/* Findings panels (anomalies + policy issues) */
+.finding-panels {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.finding-list { max-height: 340px; overflow-y: auto; }
+
+.finding {
+    display: flex;
+    gap: 0.4rem;
+    padding: 0.25rem 0.5rem;
+    border-bottom: 1px solid var(--gray-200);
+    font-size: 0.7rem;
+    align-items: center;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.finding:last-child { border-bottom: none; }
+.finding:hover { background: var(--gray-100); }
+
+.sev-chip {
+    flex-shrink: 0;
+    font-size: 0.45rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    padding: 0.08rem 0.25rem;
+    border: 1px solid var(--gray-400);
+    color: var(--gray-800);
+    margin-top: 0;
+}
+
+.sev-critical { background: #b00020; color: #fff; border-color: #b00020; }
+.sev-high     { background: #8a6d00; color: #fff; border-color: #8a6d00; }
+.sev-medium   { background: var(--gray-200); color: var(--black); }
+.sev-low      { background: var(--white); color: var(--gray-600); }
+
+.finding-body { min-width: 0; flex: 1; overflow: hidden; }
+.finding-title { font-weight: 700; color: var(--black); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.finding-detail {
+    color: var(--gray-600);
+    font-size: 0.63rem;
+    margin-top: 0.05rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.finding-meta {
+    font-size: 0.58rem;
+    color: var(--gray-500);
+    margin-top: 0.05rem;
+    font-family: 'JetBrains Mono', monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.finding-actions { flex-shrink: 0; display: flex; gap: 0.2rem; }
+.mini-btn {
+    font-size: 0.52rem;
+    padding: 0.08rem 0.25rem;
+    border: 1px solid var(--gray-400);
+    background: var(--white);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.mini-btn:hover { background: var(--black); color: var(--white); border-color: var(--black); }
+
+/* Rules table */
+.rules-table {
+    width: 100%;
+    table-layout: fixed;
+    font-size: 0.56rem;
+}
+.rules-table th {
+    font-size: 0.46rem;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--gray-600);
+    text-align: left;
+    padding: 0.2rem 0.35rem;
+    border-bottom: 1px solid var(--gray-300);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.rules-table td {
+    padding: 0.18rem 0.35rem;
+    border-bottom: 1px solid var(--gray-200);
+    vertical-align: middle;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+}
+.rules-table input[type="number"], .rules-table input[type="text"] {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.54rem;
+    padding: 0.08rem 0.2rem;
+    border: 1px solid var(--gray-300);
+    width: 80px;
+}
+.tag-statutory {
+    font-size: 0.52rem; font-weight: 700; text-transform: uppercase;
+    padding: 0.08rem 0.35rem; border: 1px solid var(--black); background: var(--black); color: var(--white);
+    border-radius: 3px; display: inline-block; white-space: nowrap; vertical-align: middle;
+}
+.tag-internal {
+    font-size: 0.52rem; font-weight: 700; text-transform: uppercase;
+    padding: 0.08rem 0.35rem; border: 1px solid var(--gray-400); color: var(--gray-700);
+    border-radius: 3px; display: inline-block; white-space: nowrap; vertical-align: middle;
+}
+.pass-bar { height: 4px; background: var(--gray-200); width: 50px; display: inline-block; vertical-align: middle; }
+.pass-bar > span { display: block; height: 100%; background: var(--black); }
+
+@media (max-width: 900px) {
+    .sidebar { width: 132px; min-width: 132px; }
+    .kpi { min-width: 92px; }
+    /* Below 900px the sidebar drops to 132px, leaving a 108px text box, and
+       bold "Reports & CFO Pack" already fills ~108px of it at 11px. There is
+       no room to grow here at all, so this width keeps the original size
+       rather than clipping. Note the narrowing only actually reaches the
+       unscaled pages: on `/dashboard` and the `app-inner` routes the more
+       specific `body.app-dashboard .sidebar` / `body.app-inner .sidebar`
+       rule above wins and the sidebar stays 195px. */
+    .sidebar-nav a { font-size: 11px; }
+}
+
+
+/* The trend and doughnut canvases were sized for a three-card page. With ten
+   KPIs, six charts and two findings panels above the fold they have to give back
+   vertical space, so their containers are now 170px (see index.html) and the
+   card chrome is tightened here. */
+
+.card-header h3 { font-size: 0.78rem; }
+.card-header { padding: 0.35rem 0.6rem; }
+.card { margin-bottom: 0.6rem; }
+
+
+/* Unreconciled ageing — the bank-rec bridge banded by how long each item has
+   been outstanding. A table rather than a chart: an accountant reading this is
+   going to work the list, and needs the counts and values, not an impression of
+   them. `.treemap-empty` is kept as the shared empty state for this slot. */
+.ageing { height: 100%; overflow-y: auto; }
+
+.ageing-table { width: 100%; border-collapse: collapse; font-size: 0.5rem; }
+.ageing-table th {
+    text-align: left; font-size: 0.44rem; text-transform: uppercase;
+    letter-spacing: 0.03em; color: var(--gray-600); font-weight: 700;
+    padding: 0.15rem 0.3rem; border-bottom: 1px solid var(--gray-300);
+    white-space: nowrap;
+}
+.ageing-table td {
+    padding: 0.2rem 0.3rem;
+    vertical-align: middle;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+}
+.ageing-table tbody tr + tr td { border-top: 1px solid var(--gray-200); }
+.ageing-table tfoot td {
+    border-top: 1px solid var(--gray-400); padding-top: 0.25rem;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.5rem;
+    white-space: nowrap;
+}
+.ageing-table .number-cell { font-family: 'JetBrains Mono', monospace; text-align: right; }
+
+.ageing-label { font-weight: 600; margin-bottom: 0.15rem; }
+
+.ageing-bar { height: 4px; background: var(--gray-200); width: 100%; }
+.ageing-bar span { display: block; height: 100%; min-width: 1px; }
+
+/* Exceptions already flagged by the reconciliation engine — stale deposits in
+   transit, cheques outstanding past their validity. Worth seeing next to the
+   count, because a bucket of ten with six exceptions is not the same job as a
+   bucket of ten clean timing differences. */
+.ageing-exception { color: #991b1b; font-weight: 700; }
+
+.ageing-split-col {
+    text-align: right; font-family: 'JetBrains Mono', monospace;
+    font-size: 0.46rem; color: var(--gray-600); white-space: nowrap;
+}
+
+.treemap-empty {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; font-size: 0.62rem; color: var(--gray-600);
+    text-align: center; padding: 0 0.5rem;
+}
+
+
+.compliance-error {
+    background: #fff4f4;
+    border: 1px solid #b00020;
+    color: #b00020;
+    padding: 0.45rem 0.6rem;
+    font-size: 0.66rem;
+    margin-bottom: 0.75rem;
+}
+.compliance-error code { background: var(--white); padding: 0 0.2rem; border: 1px solid var(--gray-300); }
+
+
+/* ===================================================================
+   Dashboard layout rows — explicit proportions rather than auto-fit, so
+   the hierarchy is fixed instead of reflowing with the viewport.
+   =================================================================== */
+.dash-row {
+    display: grid;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+    align-items: stretch;
+}
+
+.row-70-30    { grid-template-columns: 7fr 3fr; }
+.row-60-40    { grid-template-columns: 6fr 4fr; }
+.row-50-50    { grid-template-columns: 1fr 1fr; }
+.row-33-33-33 { grid-template-columns: repeat(3, 1fr); }
+
+/* Grid children default to min-content width and refuse to shrink, which
+   makes a wide chart push its neighbour off the row. */
+.dash-row > * { min-width: 0; }
+.dash-row > .card { margin-bottom: 0; display: flex; flex-direction: column; }
+.dash-row > .card > .card-body { flex: 1; }
+
+/* Risk column: the two findings panels stacked, sharing the height of the
+   trend chart beside them. */
+.risk-col { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+
+.risk-col-title {
+    font-size: 0.45rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--gray-600);
+    padding-bottom: 0.1rem;
+}
+
+.risk-col .card { margin-bottom: 0; flex: 1 1 0; display: flex; flex-direction: column; min-height: 0; }
+.risk-col .card-body { flex: 1 1 0; min-height: 0; overflow: hidden; padding: 0; }
+.risk-col .finding-list { max-height: none; height: 100%; overflow-y: auto; }
+
+/* Row 2 is the tallest band on the page, but a *fixed* height: with min-height
+   the findings list expanded to fit all 59 items and dragged the trend chart to
+   four thousand pixels with it. Fixed height + min-height:0 on the children lets
+   the lists scroll inside their panel instead of growing the page. */
+.row-70-30 { height: 430px; }
+.row-70-30 > * { min-height: 0; overflow: hidden; }
+.row-70-30 .card-body > div[style*="height"] { height: 100% !important; min-height: 150px; }
+.row-70-30 > .card > .card-body { min-height: 0; overflow: hidden; }
+
+.risk-col > .card { min-height: 0; }
+.risk-col .card-body { min-height: 0; overflow: hidden; }
+
+@media (max-width: 1100px) {
+    .row-70-30, .row-60-40, .row-50-50, .row-33-33-33 { grid-template-columns: 1fr; }
+    .row-70-30 { min-height: 0; }
+}
+
+/* The denomination selector lives in the filter bar as one more .topbar-group,
+   so it needs no styling of its own. The rule below is the reason it looked
+   broken standing alone: .topbar select has width:auto, but outside that bar it
+   inherited the global form width:100% and stretched across the row, dragging
+   its label onto two lines. */
+.topbar-group select { max-width: 190px; }
+.topbar-group label { white-space: nowrap; }
+
+/* Treasury report: account columns nested under their entity.
+   Tinted and de-emphasised so the eye reads entity totals first and drops into
+   account detail only when it wants to — the hierarchy has to survive being
+   flattened into one wide table. */
+.treasury-acct-col {
+    background: #fafafa;
+    font-size: 0.46rem;
+    color: var(--gray-700);
+    border-left: 1px dotted var(--gray-300);
+}
+th.treasury-acct-col { font-weight: 600; white-space: nowrap; }
+.treasury-acct-sub {
+    font-size: 0.4rem; font-weight: 400; color: var(--gray-600);
+    margin-top: 0.1rem; white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   Tighter page gutters.
+   With the global filter bar gone the page had a wide empty margin on every
+   side and a header that started well down the screen. An enterprise treasury
+   report is read by scanning, and every centimetre of gutter is a row of
+   figures pushed below the fold. These override the 1.5rem defaults above.
+   --------------------------------------------------------------------------- */
+.content {
+    padding: 8px 12px;
+}
+
+.card { margin-bottom: 0.75rem; }
+
+/* The Reports and Settings pages centre themselves in a 1200px column, which
+   wasted the right-hand third on a wide screen — exactly where the entity and
+   account columns need to go. */
+.content > div[style*="max-width: 1200px"],
+.content > div[style*="maxWidth: 1200px"] { max-width: none !important; }
+
+/* ===================================================================
+   Category drill-down
+   ===================================================================
+   One level at a time. The visual job is to make "this row goes deeper"
+   and "this row is the whole answer" distinguishable at a glance, since
+   the tree is ragged by design and a user should never have to click to
+   find out that a category had nothing beneath it.
+   =================================================================== */
+
+.cat-crumbs {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding-bottom: 0.4rem;
+    margin-bottom: 0.3rem;
+    border-bottom: var(--border);
+    font-size: 0.62rem;
+}
+.cat-crumbs a { color: var(--gray-600); }
+.cat-crumbs a:hover { color: var(--black); text-decoration: underline; }
+.cat-crumb-current { color: var(--black) !important; font-weight: 700; }
+.cat-crumb-sep { color: var(--gray-400); }
+.cat-list { border: var(--border); }
+
+.cat-row {
+    display: grid;
+    grid-template-columns: 1fr 3.5rem 7rem 3.5rem;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.2rem 0.5rem;
+    border-bottom: var(--border);
+    /* 0.62rem is the table cell size set on `table` far above, and these rows
+       ARE a table — the fact that they are divs so the share bar can sit inside
+       a cell is an implementation detail the reader should never be able to
+       see. At 0.66rem they came out a point larger than the Transactions grid
+       next door, which read as two different products. */
+    font-size: 0.62rem;
+    overflow: hidden;
+    white-space: nowrap;
+}
+.cat-row:last-child { border-bottom: none; }
+
+.cat-head {
+    background: var(--gray-100);
+    font-weight: 700;
+    color: var(--gray-600);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    /* Matches `th` for the same reason .cat-row matches `td`. */
+    font-size: 0.54rem;
+    padding: 0.2rem 0.5rem;
+}
+
+/* Only a row with something beneath it reacts to the pointer. A row that
+   is the complete answer stays inert, which is the honest signal. */
+.cat-row-open { cursor: pointer; }
+.cat-row-open:hover { background: var(--gray-100); }
+.cat-row-open:focus-visible { outline: 2px solid var(--black); outline-offset: -2px; }
+
+.cat-row-main { min-width: 0; }
+.cat-row-name {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: var(--black);
+    font-weight: 600;
+    /* Pinned rather than inherited. The body leading gave this single line a
+       26px box, and with the share bar stacked underneath it that made every
+       row 49px tall — 13 categories came to 637px of list before the strip and
+       the notice were counted. 1.25 is the leading the table cells already use. */
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.cat-chevron { color: var(--gray-400); font-weight: 400; }
+.cat-row-open:hover .cat-chevron { color: var(--black); }
+
+.cat-bar-track {
+    height: 3px;
+    background: var(--gray-200);
+    /* The bar stays — it is the fastest read on the screen. What goes is the
+       0.25rem of air above it, which at this root was 6.5px on every row for
+       no purpose: the row's own padding already separates it from the row
+       below, so this gap was only pushing the name up. */
+    margin-top: 0.12rem;
+    max-width: 22rem;
+}
+.cat-bar-fill { height: 100%; background: var(--black); }
+
+.cat-row-count, .cat-row-share { text-align: right; color: var(--gray-600); }
+.cat-row-amount { text-align: right; color: var(--black); }
+
+.cat-path { color: var(--gray-700); }
+.cat-dim { color: var(--gray-400); }
+
+.cat-empty {
+    padding: 0.6rem 0.6rem;
+    color: var(--gray-600);
+    font-size: 0.62rem;
+}
+.cat-error { color: #b00020; }
+
+/* The levels beneath the first, in the Transactions table's category cell.
+   Absent when the path stopped at level 1, which is a real answer and not a
+   gap to be filled. */
+.txn-cat-path {
+    font-size: 0.408rem;
+    color: var(--gray-600);
+    margin-top: 0.15rem;
+    line-height: 1.35;
+}
+.txn-cat-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    font-size: 0.408rem;
+    color: var(--gray-500);
+    margin-top: 0.15rem;
+}
+
+/* A next step, not a warning. Used where a branch is empty or a count is
+   outstanding: the screen names what happened and where the work lives. */
+.cat-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.45rem 0.6rem;
+    margin-bottom: 0.45rem;
+    background: var(--gray-100);
+    border-left: 3px solid var(--black);
+    font-size: 0.62rem;
+    color: var(--gray-800);
+    /* 1.5 on a four-line paragraph is 125px of card. 1.4 still reads as prose
+       and is the leading the rest of the app's body copy uses. */
+    line-height: 1.4;
+}
+.cat-notice .btn { flex-shrink: 0; }
+
+/* Two independent marks on one row — the flow, and whether it wants a look.
+   Without a gap they read as one word. */
+.flag-pair { display: inline-flex; gap: 0.25rem; align-items: center; }
+
+/* ===================================================================
+   TREASURY DASHBOARD
+   ===================================================================
+   A decision surface, not a wall of charts. Everything here is built
+   from the tokens already declared at the top of this file — the same
+   greys, the same two typefaces, the same square corners the global
+   reset enforces. No new palette, no gradients, no shadows.
+
+   The one restraint worth naming: colour carries meaning and nothing
+   else. Green is money in, red is money out or a breach, amber is a
+   threshold, and every other mark on the page is a grey. A panel that
+   needs a fifth colour to be understood is a panel that needs
+   rewriting.
+   =================================================================== */
+
+.treasury-dash { padding-bottom: 0.5rem; }
+
+/* ---- KPI strip ---------------------------------------------------- */
+/* Five tiles, equal width, one band. They stay on one row down to
+   tablet and become a 2-up grid on a phone rather than five slivers. */
+.kpi-strip-5 .kpi { min-width: 0; padding: 0.5rem 0.65rem; }
+
+.kpi-value.is-na {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--gray-500);
+    letter-spacing: 0;
+}
+
+/* ---- Panel -------------------------------------------------------- */
+.tp {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+}
+
+.tp-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.45rem 0.6rem 0.35rem;
+    border-bottom: 1px solid var(--gray-100);
+}
+
+.tp-titles { min-width: 0; display: flex; align-items: baseline; gap: 0.45rem; flex-wrap: wrap; }
+
+.tp-head h4 {
+    margin: 0;
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--black);
+    white-space: nowrap;
+}
+
+/* The note is the panel's subtitle: what period, what basis, what was
+   excluded. It is the difference between a chart and a claim. */
+.tp-note {
+    font-size: 0.46rem;
+    color: var(--gray-600);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tp-controls { flex: 0 0 auto; }
+
+.tp-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 0.5rem 0.6rem 0.55rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.tp-canvas { position: relative; height: 170px; flex: 1 1 auto; min-height: 140px; }
+.tp-canvas-sm { height: 130px; min-height: 110px; }
+.tp-canvas-md { height: 210px; min-height: 165px; }
+.tp-canvas-lg { height: 300px; min-height: 220px; }
+
+/* Footnotes carry the caveat the chart cannot: what was filtered out,
+   what share the top rows represent, how the accuracy was measured. */
+.tp-foot {
+    margin-top: 0.45rem;
+    padding-top: 0.35rem;
+    border-top: 1px dotted var(--gray-200);
+    font-size: 0.47rem;
+    line-height: 1.45;
+    color: var(--gray-600);
+}
+.tp-foot b { color: var(--gray-900); font-family: 'JetBrains Mono', monospace; }
+
+.tp-strip {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.45rem;
+    padding-top: 0.4rem;
+    border-top: 1px dotted var(--gray-200);
+    flex-wrap: wrap;
+}
+.tp-strip span { display: inline-flex; align-items: baseline; gap: 0.3rem; }
+.tp-strip em {
+    font-style: normal;
+    font-size: 0.44rem;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: var(--gray-500);
+}
+.tp-strip b { font-family: 'JetBrains Mono', monospace; font-size: 0.62rem; color: var(--gray-900); }
+.tp-strip .is-pos b { color: #0a6b2d; }
+.tp-strip .is-neg b { color: #b00020; }
+
+.tp-table { margin-top: 0.45rem; }
+
+/* ---- Segmented control -------------------------------------------- */
+/* Squared off and grey — the global reset kills the radius anyway, and
+   a pill toggle would be the one consumer-app tell on the page. */
+.seg { display: inline-flex; border: 1px solid var(--gray-200); }
+.seg-btn {
+    background: var(--white);
+    border: none;
+    border-right: 1px solid var(--gray-200);
+    padding: 0.18rem 0.42rem;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.46rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    color: var(--gray-600);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.seg-btn:last-child { border-right: none; }
+.seg-btn:hover { background: var(--gray-100); color: var(--black); }
+.seg-btn.is-on { background: var(--black); color: var(--white); }
+
+/* ---- Liquidity summary -------------------------------------------- */
+.liq-list { display: flex; flex-direction: column; margin: 0; }
+
+.liq-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.34rem 0;
+    border-bottom: 1px solid var(--gray-100);
+}
+.liq-row:last-of-type { border-bottom: none; }
+
+.liq-row dt {
+    font-size: 0.5rem;
+    font-weight: 600;
+    color: var(--gray-600);
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+}
+.liq-row dd {
+    margin: 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--gray-900);
+    white-space: nowrap;
+}
+
+/* Current cash and the buffer are the two figures a treasurer reads
+   first, so they are the two that are allowed to be loud. */
+.liq-row.is-lead dt { color: var(--black); font-weight: 700; }
+.liq-row.is-lead dd { font-size: 0.85rem; }
+
+.liq-row.is-muted dt, .liq-row.is-muted dd { color: var(--gray-500); font-weight: 600; }
+.liq-row.is-muted dd { font-family: 'IBM Plex Sans', sans-serif; font-size: 0.55rem; }
+
+.liq-row.is-breach dd { color: #b00020; }
+
+.liq-foot {
+    margin-top: 0.5rem;
+    padding-top: 0.4rem;
+    border-top: 1px dotted var(--gray-200);
+    font-size: 0.46rem;
+    line-height: 1.45;
+    color: var(--gray-600);
+}
+.is-breach-text { color: #b00020; font-weight: 600; }
+
+/* ---- Empty and notice states -------------------------------------- */
+/* An empty chart with labelled axes reads as "the answer is zero".
+   These say which question could not be answered, and why. */
+.panel-empty {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    min-height: 120px;
+    padding: 1rem 0.75rem;
+    border: 1px dashed var(--gray-200);
+    background: #fcfcfc;
+}
+.panel-empty-title { font-size: 0.62rem; font-weight: 700; color: var(--gray-800); }
+.panel-empty-detail {
+    margin-top: 0.25rem;
+    max-width: 34ch;
+    font-size: 0.48rem;
+    line-height: 1.5;
+    color: var(--gray-600);
+}
+
+.dash-loading {
+    padding: 0.4rem 0.6rem;
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--gray-200);
+    background: var(--gray-100);
+    font-size: 0.52rem;
+    font-weight: 600;
+    color: var(--gray-600);
+}
+
+/* Staleness is a treasury fact, not a UI detail: every figure below is
+   as at the last statement, and saying so is cheaper than being wrong. */
+.dash-notice {
+    padding: 0.4rem 0.6rem;
+    margin-bottom: 0.75rem;
+    border: 1px solid #e6d3a3;
+    border-left: 3px solid #c2843a;
+    background: #fdfaf3;
+    font-size: 0.5rem;
+    line-height: 1.5;
+    color: #6b5320;
+}
+
+/* ---- Rows --------------------------------------------------------- */
+.row-100 { grid-template-columns: 1fr; }
+
+/* The liquidity row is the tallest band on the page and is pinned, not
+   min-height'd: letting the summary column grow would drag the chart
+   beside it to whatever height the list happened to need. */
+.row-liquidity { align-items: stretch; }
+.row-liquidity > .tp { min-height: 0; }
+.tp-primary .tp-body { min-height: 0; }
+.tp-summary .tp-body { overflow-y: auto; }
+
+/* The risk panels keep their own internals; only their frame moves. */
+.row-risk .risk-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    align-items: start;
+}
+.row-risk .risk-col-title { grid-column: 1 / -1; }
+.row-risk .risk-col .card { min-height: 0; }
+.row-risk .finding-list { max-height: 300px; height: auto; }
+
+/* ===================================================================
+   Responsive
+   ===================================================================
+   Not "shrink the desktop grid until it stops being readable". Each
+   breakpoint changes the arrangement: charts keep their height, and
+   the ranked horizontal bars — the ones whose labels are the data —
+   get taller rather than narrower, because a truncated counterparty
+   name is a chart that has stopped working.
+   =================================================================== */
+
+/* Tablet: primary chart stacks above its summary rather than being
+   squeezed into a column too narrow to read a date axis in. */
+@media (max-width: 1100px) {
+    .row-liquidity { grid-template-columns: 1fr; }
+    .tp-canvas-lg { height: 260px; }
+}
+
+@media (max-width: 900px) {
+    .row-risk .risk-col { grid-template-columns: 1fr; }
+    .kpi-strip-5 { display: grid; grid-template-columns: repeat(3, 1fr); overflow-x: visible; }
+    .kpi-strip-5 .kpi { border-right: 1px solid var(--gray-200); border-bottom: 1px solid var(--gray-200); }
+    .kpi-strip-5 .kpi:nth-child(3n) { border-right: none; }
+    .kpi-strip-5 .kpi:nth-last-child(-n+2) { border-bottom: none; }
+}
+
+/* Phone: one column, and the tiles become a 2-up grid rather than five
+   90px slivers scrolling sideways. */
+@media (max-width: 720px) {
+    .dash-row, .row-50-50, .row-60-40, .row-70-30, .row-33-33-33, .row-100 {
+        grid-template-columns: 1fr;
+    }
+    .kpi-strip-5 { grid-template-columns: repeat(2, 1fr); }
+    .kpi-strip-5 .kpi { border-right: 1px solid var(--gray-200); border-bottom: 1px solid var(--gray-200); }
+    .kpi-strip-5 .kpi:nth-child(2n) { border-right: none; }
+    .kpi-strip-5 .kpi:last-child { border-right: none; border-bottom: none; }
+
+    .tp-head { flex-wrap: wrap; }
+    .tp-titles { width: 100%; }
+    .tp-controls { width: 100%; }
+
+    /* Rankings need vertical room for their labels, not less of it. */
+    .tp-canvas-md { height: 240px; }
+    .tp-canvas-lg { height: 230px; }
+    .tp-canvas-sm { height: 150px; }
+}
+
+@media (max-width: 420px) {
+    .kpi-value { font-size: 0.92rem; }
+    .liq-row.is-lead dd { font-size: 0.78rem; }
+}
+
+/* Tablet keeps two columns — the 1100px rule further up collapses every
+   dashboard row to one, which on a 900px screen wastes half the width and
+   makes the page four screens long. Two exceptions stay stacked: the
+   liquidity row, whose primary chart needs the full width to keep a
+   readable date axis, and the rankings row, whose labels are the data. */
+@media (min-width: 721px) and (max-width: 1100px) {
+    .treasury-dash .row-50-50 { grid-template-columns: 1fr 1fr; }
+    .treasury-dash .row-rankings { grid-template-columns: 1fr; }
+    .treasury-dash .row-liquidity { grid-template-columns: 1fr; }
+}
+
+/* Two ranked charts stacked full-width do not each need 210px of canvas. */
+@media (min-width: 721px) and (max-width: 1100px) {
+    .row-rankings .tp-canvas-md { height: 180px; }
+}
+
+/* ---- Ranked list: the narrow-viewport form of a ranked bar chart ---- */
+.rank-list { list-style: none; margin: 0; padding: 0; }
+
+.rank-item { padding: 0.4rem 0; border-bottom: 1px solid var(--gray-100); }
+.rank-item:last-child { border-bottom: none; }
+
+.rank-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+/* No ellipsis and no nowrap: this element exists precisely because the
+   chart axis could not show the whole name. */
+.rank-name {
+    font-size: 0.52rem;
+    font-weight: 600;
+    color: var(--gray-900);
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.rank-val {
+    flex: 0 0 auto;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: var(--black);
+    white-space: nowrap;
+}
+
+.rank-bar { height: 4px; background: var(--gray-100); margin-top: 0.22rem; }
+.rank-bar > span { display: block; height: 100%; background: var(--gray-700); }
+
+.rank-meta { margin-top: 0.18rem; font-size: 0.45rem; color: var(--gray-600); }
+
+/* ===================================================================
+   OPERATIONS & CONTROL — dense card band
+   ===================================================================
+   Twelve cards where the old design had one scrolling strip. The strip
+   put every figure on a single 104px-wide sliver that clipped its own
+   text and scrolled sideways off the screen; as cards they wrap into
+   the width available and each one gets room for a real number plus the
+   line of context that makes it mean something.
+
+   Density here is deliberate, but it is density of DATA, not of ink:
+   the cards share one hairline grid, carry no shadows or fills, and
+   colour appears only when a figure needs attention.
+   =================================================================== */
+.ops-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 1px;                       /* the gap IS the rule between cards */
+    background: var(--gray-200);    /* shows through as hairlines */
+    border: 1px solid var(--gray-200);
+    margin-bottom: 0.75rem;
+}
+
+.ops-card {
+    background: var(--white);
+    padding: 0.4rem 0.55rem;
+    min-width: 0;
+    line-height: 1.25;
+}
+
+.ops-label {
+    font-size: 0.44rem;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: var(--gray-600);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ops-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--black);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 0.08rem;
+}
+
+.ops-sub {
+    font-size: 0.43rem;
+    color: var(--gray-600);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 0.03rem;
+}
+
+/* Same three states as the treasury tiles, so a red number means the
+   same thing wherever it appears on the page. */
+.ops-value.is-critical { color: #b00020; }
+.ops-value.is-warn     { color: #8a6d00; }
+.ops-value.is-good     { color: #0a6b2d; }
+
+/* ===================================================================
+   POLICY RULES — one line per rule
+   ===================================================================
+   A fixed grid rather than a table: the columns stay aligned down the
+   list so the limits and pass rates can be scanned vertically, which is
+   the only way to spot the rule that is dragging compliance down.
+   =================================================================== */
+.rulelist { list-style: none; margin: 0; padding: 0; }
+
+.rulerow {
+    display: grid;
+    grid-template-columns: 52px minmax(0, 1fr) 58px 56px 84px 96px;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.28rem 0;
+    border-bottom: 1px solid var(--gray-100);
+    font-size: 0.5rem;
+}
+.rulerow:last-child { border-bottom: none; }
+
+.rule-sev {
+    font-size: 0.4rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    text-align: center;
+    padding: 0.08rem 0.2rem;
+    border: 1px solid var(--gray-300);
+    color: var(--gray-700);
+}
+.rule-sev.sev-critical { color: #b00020; border-color: #f0b8c0; background: #fdf3f4; }
+.rule-sev.sev-high     { color: #8a3d00; border-color: #e8c9a8; background: #fdf8f2; }
+.rule-sev.sev-medium   { color: #6b5320; border-color: #e6d3a3; background: #fdfaf3; }
+.rule-sev.sev-low      { color: var(--gray-600); }
+
+/* The rule name is the one thing allowed to take the slack, and the one
+   thing allowed to be clipped — its full text is on the row's title. */
+.rule-name {
+    font-weight: 600;
+    color: var(--gray-900);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.rule-scope {
+    font-size: 0.43rem;
+    color: var(--gray-600);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+}
+
+.rule-limit {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    font-weight: 700;
+    color: var(--gray-900);
+    text-align: right;
+    white-space: nowrap;
+}
+
+.rule-pass { display: flex; align-items: center; gap: 0.3rem; justify-content: flex-end; }
+.rule-pass b {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.55rem;
+    min-width: 2.2em;
+    text-align: right;
+}
+.rule-pass.is-untested {
+    font-size: 0.44rem;
+    color: var(--gray-500);
+    font-style: italic;
+    justify-content: flex-end;
+}
+
+.rule-bar { flex: 1 1 auto; height: 4px; background: var(--gray-100); min-width: 28px; }
+.rule-bar > span { display: block; height: 100%; }
+
+/* Below tablet the fixed columns stop fitting; the row becomes two
+   lines rather than compressing the name into nothing. */
+@media (max-width: 900px) {
+    .rulerow {
+        grid-template-columns: 52px minmax(0, 1fr) 84px 84px;
+        row-gap: 0.15rem;
+    }
+    .rulerow .tag-statutory,
+    .rulerow .tag-internal { grid-column: 2; }
+    .rule-scope { display: none; }
+}
+
+@media (max-width: 720px) {
+    .ops-grid { grid-template-columns: repeat(2, 1fr); }
+    .rulerow { grid-template-columns: 46px minmax(0, 1fr) 76px; }
+    .rulerow .tag-statutory,
+    .rulerow .tag-internal { display: none; }
+    .rule-limit { grid-column: 3; }
+    .rule-pass { grid-column: 2 / -1; justify-content: flex-start; }
+}
+
+/* ===================================================================
+   COMPACT PASS
+   ===================================================================
+   Three things, all about fitting more on one screen:
+
+     1. Equal, fixed tile grids, so no tile is wider than its neighbour
+        and none of them wrap onto a line of their own.
+     2. Shorter table rows. Nothing is removed — cells that stacked two
+        lines of text now put the second line in its own column, which
+        is what actually shortens a row.
+     3. Tighter padding throughout, in step with the smaller root size.
+   =================================================================== */
+
+/* ---- Tile grids ---------------------------------------------------
+   Explicit column counts rather than auto-fit. auto-fit sizes tiles by
+   available width, so the last one or two would drop to a second row on
+   any screen that did not divide evenly — which is exactly what the
+   Uncategorised and Statements tiles were doing. Ten columns for the
+   control band, five for the treasury band above it, so the two align. */
+.ops-grid {
+    grid-template-columns: repeat(10, minmax(0, 1fr));
+}
+
+.kpi-strip-5 .kpi,
+.ops-card {
+    padding: 0.34rem 0.42rem;
+}
+
+/* Ten tiles across a 1085px content column leaves about 104px each. At the
+   larger type that is the whole budget, so the horizontal padding comes down
+   to buy the labels the room they need. */
+.ops-card { padding-left: 0.28rem; padding-right: 0.28rem; }
+
+.ops-value { font-size: 0.76rem; }
+.ops-label, .ops-sub { font-size: 0.42rem; }
+
+/* ---- Cards and panels --------------------------------------------- */
+body.app-dashboard .card-body,
+body.app-inner .card-body { padding: 0.7rem; }
+body.app-dashboard .card-header,
+body.app-inner .card-header { padding: 0.45rem 0.7rem; }
+.tp-body { padding: 0.4rem 0.5rem 0.45rem; }
+.tp-head { padding: 0.35rem 0.5rem 0.28rem; }
+
+/* ---- Tables -------------------------------------------------------
+   Row height is set by cell padding and line-height far more than by
+   font size, so this is where a long table actually gets shorter. */
+/* Generic tables only. The rules and ageing tables already carry tighter
+   padding of their own (0.18rem / 0.2rem); listing them here would have had
+   the opposite of the intended effect and made those rows TALLER, because a
+   class selector beats a bare element one and this block comes last. */
+body.app-dashboard table th,
+body.app-dashboard table td,
+body.app-inner table th,
+body.app-inner table td {
+    padding: 0.18rem 0.4rem;
+    line-height: 1.25;
+}
+
+/* Controls sitting inside a cell set the row height, not the text beside
+   them. A select with default chrome is taller than two lines of this
+   type, so every row carrying one was half again as tall as the rest. */
+body.app-dashboard table td select,
+body.app-dashboard table td input,
+body.app-dashboard table td button,
+body.app-dashboard table td .btn,
+body.app-dashboard table td .mini-btn,
+body.app-inner table td select,
+body.app-inner table td input,
+body.app-inner table td button,
+body.app-inner table td .btn,
+body.app-inner table td .mini-btn {
+    padding: 0.1rem 0.25rem !important;
+    font-size: 0.5rem;
+    line-height: 1.15;
+    height: auto;
+    min-height: 0;
+}
+
+/* A cell whose content wraps is a cell that makes every row in the
+   table taller, including the ones that fit. */
+body.app-dashboard table td,
+body.app-inner table td { vertical-align: middle; }
+
+/* ---- Rules table: two stacked lines become two columns -------------
+   Each rule row carried its name and description in one cell, one above
+   the other, which made every row twice as tall as the text needed. The
+   description now sits in its own column on the same line. */
+.rules-table .rule-cell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    align-items: baseline;
+    column-gap: 0.5rem;
+}
+.rules-table .rule-cell > * {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Same idea for the two-line basis cell beside it. */
+.rules-table .basis-cell {
+    display: flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    white-space: nowrap;
+}
+.rules-table .basis-cell > div { margin-top: 0 !important; }
+
+/* ---- Findings list ------------------------------------------------
+   The anomaly and policy panels stack a title, a detail line and a meta
+   line per finding. The meta line is short and belongs beside the
+   title, not under the detail. */
+.finding { padding: 0.35rem 0.5rem; gap: 0.4rem; }
+.finding-title { font-size: 0.5rem; line-height: 1.25; }
+.finding-detail {
+    font-size: 0.45rem;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;      /* two lines, then ellipsis — the full text is on the title attribute */
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.finding-meta { font-size: 0.42rem; }
+
+/* ---- Liquidity summary -------------------------------------------- */
+.liq-row { padding: 0.26rem 0; }
+.liq-row dd { font-size: 0.64rem; }
+.liq-row.is-lead dd { font-size: 0.78rem; }
+
+/* ---- Topbar -------------------------------------------------------- */
+body.app-dashboard .topbar,
+body.app-inner .topbar { padding: 4px 8px; gap: 7px; }
+body.app-dashboard .topbar-group select,
+body.app-dashboard .topbar-group input,
+body.app-inner .topbar-group select,
+body.app-inner .topbar-group input { padding: 0.12rem 0.2rem; }
+
+/* ---- Narrower screens keep the tiles equal, just fewer per row ------ */
+/* Ten across holds down to roughly a 1100px window, which is where a tile
+   stops being wide enough for its longest label ("Policy Compliance"). Below
+   that it halves to five, so the tiles stay equal and the band stays two rows
+   at worst rather than an uneven three. */
+@media (max-width: 1099px) { .ops-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+@media (max-width: 720px)  { .ops-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 480px)  { .ops-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+
+/* ---- Risk panels: size to content, not to a parent that has no height ----
+   These two cards showed as headers with nothing under them. `.risk-col
+   .card-body` carries `flex: 1 1 0`, which only works when the card has a
+   definite height to distribute — true in the old fixed-height row, false in
+   the full-width row they live in now, so the body resolved to zero and hid 48
+   anomalies and 60 policy breaches behind an empty box.
+
+   Content-sized here, with the scroll cap left on the list itself. */
+.row-risk .risk-col .card-body {
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: visible;
+}
+
+.row-risk .risk-col .finding-list {
+    max-height: 320px;
+    height: auto;
+    overflow-y: auto;
+}
+
+/* ===================================================================
+   HOW TRANSACTIONS ARE CLASSIFIED
+   =================================================================== */
+.explain {
+    font-size: 0.5rem;
+    line-height: 1.55;
+    color: var(--gray-700);
+    margin: 0 0 0.4rem 0;
+    max-width: 90ch;            /* prose stops being readable past this */
+}
+.explain b { color: var(--gray-900); }
+.explain code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.92em;
+    background: var(--gray-100);
+    padding: 0 0.2em;
+}
+
+.evid { margin-top: 0.35rem; }
+
+.evid-row {
+    display: grid;
+    grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.2rem 5.5rem;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.2rem 0;
+    border-bottom: 1px solid var(--gray-100);
+    font-size: 0.47rem;
+}
+.evid-row:last-child { border-bottom: none; }
+
+.evid-label {
+    font-weight: 600;
+    color: var(--gray-900);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.evid-bar { height: 5px; background: var(--gray-100); }
+.evid-bar > span { display: block; height: 100%; background: var(--gray-700); }
+
+.evid-n {
+    font-family: 'JetBrains Mono', monospace;
+    text-align: right;
+    color: var(--gray-900);
+}
+
+.evid-kind {
+    font-size: 0.42rem;
+    color: var(--gray-600);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+}
+
+/* The rows whose category names the payment rail rather than a purpose. These
+   are the ones a person actually has to settle, so they are marked rather than
+   left to look identical to a confident answer. */
+.evid-row.is-weak .evid-bar > span { background: #c2843a; }
+.evid-row.is-weak .evid-kind { color: #8a6d00; font-weight: 700; }
+
+@media (max-width: 900px) {
+    .evid-row { grid-template-columns: minmax(0, 1fr) 3rem; }
+    .evid-bar, .evid-kind { display: none; }
+}
+
+/* ===================================================================
+   TRANSACTIONS TABLE — stop it running off the right edge
+   ===================================================================
+   The table is wider than its column and the container scrolls, but the
+   scroll was easy to miss: the row ran to the edge with no boundary, so
+   it read as content being cut off rather than content continuing.
+
+   Two changes. The description column gives up its fixed share so the
+   table can fit more often, and the container gets a visible edge and a
+   real scrollbar so that when it genuinely cannot fit, that is legible.
+   =================================================================== */
+/* table-layout: FIXED, not auto.
+   `max-width` on a <td> is not honoured under `table-layout: auto` — the
+   browser sizes columns to their content regardless, which is how the
+   description column reached 507px and pushed the table 394px past its
+   container. Fixed layout is the only mode in which a declared width is
+   actually a width.
+
+   Percentages rather than rem so the table fits whatever column it is given,
+   at any type scale. They total 100%, so there is nothing left to overflow. */
+body.app-inner .transactions-table.txn-workbench {
+    table-layout: fixed;
+    width: 100%;
+}
+
+body.app-inner .txn-workbench .date-col    { width: 9%; }
+body.app-inner .txn-workbench .account-col { width: 12%; }
+body.app-inner .txn-workbench .desc-col    { width: 30%; }
+body.app-inner .txn-workbench .cat-col     { width: 17%; }
+body.app-inner .txn-workbench .amount-col  { width: 10.6%; }
+
+body.app-inner .table-responsive {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    border-right: 1px solid var(--gray-200);
+}
+
+/* A scrollbar you can actually see, rather than the overlay one that
+   appears only while scrolling and makes clipped content look lost. */
+body.app-inner .table-responsive::-webkit-scrollbar { height: 9px; }
+body.app-inner .table-responsive::-webkit-scrollbar-track { background: var(--gray-100); }
+body.app-inner .table-responsive::-webkit-scrollbar-thumb { background: var(--gray-400); }
+body.app-inner .table-responsive::-webkit-scrollbar-thumb:hover { background: var(--gray-600); }
+
+/* The description is the column that can afford to give: it is the only
+   free text in the row and it already carries its full value in a title
+   attribute. Capping it is what lets the numeric columns stay whole. */
+/* Every cell clips rather than widening. The full text of the two that can
+   actually be long is already on each row's title attribute. */
+body.app-inner .txn-workbench td,
+body.app-inner .txn-workbench th {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ===================================================================
+   REPORTS — the decision cards were far too large
+   ===================================================================
+   Four cards taking a third of the viewport to show four numbers.
+
+   Scoped to `.reports-page` because `.stat-card` is the same markup used
+   by Ingestion, Email Pickup and RPA, and those pages are staying exactly
+   as they are. `!important` on the value because the size is set inline
+   in the JSX alongside a conditional colour, and a stylesheet rule cannot
+   otherwise reach it.
+   =================================================================== */
+.reports-page .stats-grid {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)) !important;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem !important;
+}
+
+.reports-page .stat-card { padding: 0.5rem 0.65rem; }
+
+.reports-page .stat-label {
+    font-size: 0.4rem;
+    margin-bottom: 0.2rem;
+}
+
+.reports-page .stat-value {
+    font-size: 0.72rem !important;
+    line-height: 1.25;
+}
+
+.reports-page .stat-change {
+    font-size: 0.4rem;
+    margin-top: 0.15rem;
+}
+
+/* ===================================================================
+   REPORTS — filter bar
+   ===================================================================
+   Uses the app's shared `.topbar`, so it matches the bar on Dashboard
+   and Transactions rather than being a padded card of its own. Only the
+   bits specific to this page are set here.
+   =================================================================== */
+.reports-filter {
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--gray-200);
+    background: var(--white);
+}
+
+.reports-filter .btn { flex-shrink: 0; }
+
+/* The resolved range, pushed to the end of the same line. It stays
+   because a preset that does not say which days it covers cannot be
+   audited — but it is one line at the end of the bar, not a column. */
+.reports-range {
+    margin-left: auto;
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    white-space: nowrap;
+    color: var(--gray-700);
+}
+.reports-range b {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.56rem;
+    color: var(--black);
+}
+.reports-range em {
+    font-style: normal;
+    font-size: 0.48rem;
+    color: var(--gray-600);
+}
+
+/* On a narrow window the range drops under the controls rather than
+   squeezing the date inputs to nothing. */
+@media (max-width: 1000px) {
+    .reports-range { margin-left: 0; width: 100%; }
+}

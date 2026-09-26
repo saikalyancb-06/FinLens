@@ -1,0 +1,163 @@
+services:
+  # 1. PostgreSQL Database Service
+  postgres:
+    image: postgres:15-alpine
+    container_name: financial_postgres
+    restart: always
+    environment:
+      # Credentials match the DATABASE_URL in .env / .env.example so the app
+      # connects identically whether it runs in a container or on the host.
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      # No default. The `:?` form makes `docker compose up` fail with this
+      # message rather than starting the database on the password printed in
+      # this file. The previous `:-postgres` default combined with the
+      # published port below to put an internet-reachable Postgres holding
+      # customer bank statements behind the credentials postgres/postgres.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-backend_db}
+    # Loopback only, for the same reason the redis service below is: "5432:5432"
+    # publishes on every interface of the host, so on a cloud VM the database is
+    # reachable by anyone who can route to the box. The backend reaches it as
+    # postgres:5432 over the compose network and needs no published port at all;
+    # this binding exists so `psql -h 127.0.0.1` still works when you are ON the
+    # host. Delete these two lines if you do not want even that.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # -d names the application database: without it pg_isready reports ready
+      # during first-boot initialisation, before backend_db exists.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-backend_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # 2. Redis Queue Service
+  redis:
+    image: redis:7-alpine
+    container_name: financial_redis
+    restart: always
+    # Bound to the loopback interface, NOT 0.0.0.0. "6379:6379" published this
+    # container on every interface of the host, and this Redis has no password
+    # and no TLS — on a cloud VM that is an open Redis holding cached financial
+    # figures, reachable by anyone who can route to the box.
+    #
+    # backend reaches it as redis:6379 over the compose network, which does not
+    # need any published port at all. The loopback binding is kept purely so
+    # `redis-cli -h 127.0.0.1` still works when you are ON the host debugging.
+    # Delete these two lines entirely if you do not want even that.
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 3. FastAPI Backend REST API Service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: financial_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-backend_db}
+      # Alembic owns the schema in a container deployment; see the migration
+      # runbook in docs/POSTGRES_MIGRATION.md.
+      DB_AUTO_CREATE: "false"
+      # Turns on every production guard in app/config.py and the branches gated
+      # on it elsewhere. Without this the container defaults to "development",
+      # which left validate_security() dormant, /auth/forgot-password returning
+      # the reset token in its response body, and the AA webhook accepting
+      # unsigned payloads.
+      ENVIRONMENT: production
+      # Supplied by the deployment, never stored here. The `:?` form makes
+      # `docker compose up` FAIL with this message when the variable is unset,
+      # instead of silently starting on a secret published in this repository.
+      # Generate one with:
+      #     python -c "import secrets; print(secrets.token_urlsafe(64))"
+      # and export it, or put it in a .env file beside this compose file.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
+      # Explicit rather than relying on the in-code production default, so the
+      # origins this deployment accepts are visible in the deployment file.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://kredo.in,https://app.kredo.in}
+      # Only true when something upstream actually sets X-Forwarded-For. Left
+      # on without a proxy, any client can spoof the header and evade the rate
+      # limiter; left off BEHIND a proxy, every request looks like it came from
+      # the proxy and all users share one rate-limit bucket.
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      REFRESH_TOKEN_EXPIRE_DAYS: 7
+      UPLOAD_DIR: uploads
+      ML_MODELS_DIR: mlmodel/models
+      CONFIDENCE_THRESHOLD: 0.80
+      REDIS_URL: redis://redis:6379/0
+      LOG_LEVEL: INFO
+      LOG_DIR: logs
+      LOG_FILE: app.log
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # 4. Asynchronous Queue Worker Service — REMOVED (commented out, not deleted)
+  #
+  # This service did no work. Its command was:
+  #     python -c "import time; print('[Worker Service] ...'); time.sleep(86400)"
+  # which sleeps for a day, exits, and is restarted by `restart: always` — so it
+  # printed one line every 24 hours and consumed nothing from any queue.
+  #
+  # Nothing depended on it. File parsing is dispatched by FastAPI's
+  # `background_tasks.add_task(process_file_parsing_task, ...)` in
+  # app/api/files.py, which runs IN THE BACKEND PROCESS. There is no Celery, no
+  # RQ, and app/services/parsing_queue.py exposes a plain function, not a
+  # consumer. REDIS_URL was passed to this container but never connected to.
+  #
+  # It is disabled rather than implemented, because writing a queue consumer to
+  # justify a container in a compose file is the wrong order to do that work in.
+  # It also ran with the database credentials and the JWT secret for no purpose,
+  # and its command never imported app.config, so it would not have executed the
+  # production security validation either.
+  #
+  # Reinstate this block when a real queue consumer exists, and give it
+  # ENVIRONMENT and JWT_SECRET_KEY the same way the backend has them.
+
+#  # 4. Asynchronous Queue Worker Service
+#  worker:
+#    build:
+#      context: .
+#      dockerfile: Dockerfile
+#    container_name: financial_worker
+#    restart: always
+#    command: python -c "import time; print('[Worker Service] Queue worker initialized and waiting for jobs...'); time.sleep(86400)"
+#    environment:
+#      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/${POSTGRES_DB:-backend_db}
+#      DB_AUTO_CREATE: "false"
+#      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set}
+#      UPLOAD_DIR: uploads
+#      ML_MODELS_DIR: mlmodel/models
+#      CONFIDENCE_THRESHOLD: 0.80
+#      REDIS_URL: redis://redis:6379/0
+#      LOG_LEVEL: INFO
+#      LOG_DIR: logs
+#    volumes:
+#      - ./uploads:/app/uploads
+#      - ./logs:/app/logs
+#    depends_on:
+#      postgres:
+#        condition: service_healthy
+#      redis:
+#        condition: service_healthy
+
+volumes:
+  postgres_data:

@@ -1,0 +1,86 @@
+# What must never enter the image.
+#
+# The Dockerfile does `COPY . .`, so without this file the build context is the
+# whole working directory. That shipped three categories of thing that must not
+# be in a deployed image:
+#
+#   1. SECRETS. `.env` holds the real JWT signing key and the Google/Microsoft
+#      client secrets. Anyone who can pull the image can read them, and they
+#      survive in the layer even if a later step deletes the file.
+#   2. ~420 MB of dead weight — dist/KredoAgent.exe (389 MB), the compressed
+#      SQLite snapshot (28 MB) and the .sql backups (3.7 MB) — none of which the
+#      running service opens.
+#   3. Stale state: __pycache__ built against a different Python, plus logs and
+#      uploads from the developer's machine landing on top of the runtime dirs.
+
+# ---- Secrets -----------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ---- Version control / tooling ----------------------------------------------
+.git
+.gitignore
+.github
+.claude
+.vscode
+.idea
+
+# ---- Local runtime state (the container makes its own; on Render the uploads
+#      directory is a mounted disk, so a copy from the build context would be
+#      shadowed by the mount anyway) ------------------------------------------
+uploads/
+logs/
+*.log
+
+# ---- Python build artefacts --------------------------------------------------
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# ---- Databases, dumps and backups -------------------------------------------
+*.db
+*.db.gz
+*.sqlite
+*.sqlite3
+*.sql
+backup_*.sql
+*.db.backup_*
+dump.rdb
+
+# ---- The Windows agent build. 389 MB, runs on the user's own PC, and the
+#      server has no use for it. --------------------------------------------
+dist/
+build/
+KredoAgent.spec
+
+# ---- Tests and developer scripts. The image runs the service; it does not run
+#      the suite. Keep `fixtures/` out for the same reason. ------------------
+tests/
+fixtures/
+scripts/
+docs/
+
+# ---- ML training-time material. The runtime loads exactly one artefact,
+#      mlmodel/artifacts/categorizer_model.joblib (app/categorization/
+#      ml_service.py), so the training corpora, notebooks, HTML reports and
+#      CatBoost logs are not needed. `mlmodel/artifacts/` is NOT excluded. ----
+mlmodel/catboost_info/
+mlmodel/artifacts_backup_*/
+mlmodel/models_existing_eval/
+mlmodel/models_newsheet_eval/
+mlmodel/tests/
+mlmodel/*.html
+mlmodel/*.csv
+mlmodel/*.pdf
+
+# ---- Loose data files in the project root -----------------------------------
+data.csv
+data_combined.csv
+data_original.csv

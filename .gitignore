@@ -1,0 +1,102 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+build/
+.eggs/
+
+# ─── Virtual environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ─── Environment / Secrets (NEVER commit these) ───────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# ─── Database files ───────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+*.db.gz
+*.db.backup_*
+local.db
+treasury.db
+backend_sqlite.db
+
+# ─── SQL backup snapshots ─────────────────────────────────────────────────────
+*.sql
+backup_*.sql
+
+# ─── Uploads (user data / test debris) ───────────────────────────────────────
+uploads/
+
+# ─── CSV / data files (potentially large / sensitive) ────────────────────────
+data.csv
+data_combined.csv
+data_original.csv
+mlmodel/data.csv
+mlmodel/golden_reference.csv
+
+# ─── ML model artefacts (large binary files) ─────────────────────────────────
+mlmodel/catboost_info/
+mlmodel/models/
+mlmodel/layer*/
+mlmodel/artifacts/
+mlmodel/artifacts_backup*/
+mlmodel/models_existing_eval/
+mlmodel/models_newsheet_eval/
+mlmodel/__pycache__/
+mlmodel/.pytest_cache/
+mlmodel/predictions_data.js
+
+# ─── PDF / documents uploaded during dev ─────────────────────────────────────
+*.pdf
+
+# ─── Compiled / packaged executables ─────────────────────────────────────────
+dist/
+*.exe
+*.spec
+
+# ─── Test cache ───────────────────────────────────────────────────────────────
+.pytest_cache/
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ─── IDE ──────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+
+# ─── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Scratch / temp ───────────────────────────────────────────────────────────
+scratch/
+_to_delete/
+
+# ─── Captured test / script output text files ────────────────────────────────
+full_suite_*.txt
+full_test_*.txt
+test_out.txt
+test_run_full.txt
+current_out.txt
+upgrade_out.txt
+recon_failures.txt
+
+# ─── HTML verification reports (generated artefacts) ─────────────────────────
+mlmodel/verification_*.html

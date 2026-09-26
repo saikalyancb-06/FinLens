@@ -1,0 +1,16 @@
+bank_name: Bank of Baroda
+account_type: Current Account
+column_mapping:
+  date: 0
+  narration: 1
+  withdrawal: 2
+  deposit: 3
+  balance: 4
+  balance_dr_cr: 5
+number_format: Indian
+date_format: "%d/%m/%Y"
+header_search_keywords:
+  - "DATE"
+  - "NARRATION"
+  - "WITHDRAWAL"
+  - "BALANCE"

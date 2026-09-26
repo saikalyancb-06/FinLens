@@ -1,0 +1,172 @@
+{
+  "transactions": [
+    {
+      "date": "2026-01-01",
+      "description": "SALARY CREDIT ACME CORP PAYROLL",
+      "debit": "",
+      "credit": 78000,
+      "balance": 178000.0
+    },
+    {
+      "date": "2026-01-05",
+      "description": "EMI DEBIT HDFC HOME LOAN",
+      "debit": 12500,
+      "credit": "",
+      "balance": 165500.0
+    },
+    {
+      "date": "2026-01-07",
+      "description": "NEFT RENT PAYMENT LANDLORD",
+      "debit": 25000,
+      "credit": "",
+      "balance": 140500.0
+    },
+    {
+      "date": "2026-01-12",
+      "description": "UPI-BIGBASKET-GROCERIES",
+      "debit": 8000,
+      "credit": "",
+      "balance": 132500.0
+    },
+    {
+      "date": "2026-02-01",
+      "description": "SALARY CREDIT ACME CORP PAYROLL",
+      "debit": "",
+      "credit": 78000,
+      "balance": 210500.0
+    },
+    {
+      "date": "2026-02-05",
+      "description": "EMI DEBIT HDFC HOME LOAN",
+      "debit": 12500,
+      "credit": "",
+      "balance": 198000.0
+    },
+    {
+      "date": "2026-02-07",
+      "description": "NEFT RENT PAYMENT LANDLORD",
+      "debit": 25000,
+      "credit": "",
+      "balance": 173000.0
+    },
+    {
+      "date": "2026-02-12",
+      "description": "UPI-BIGBASKET-GROCERIES",
+      "debit": 8000,
+      "credit": "",
+      "balance": 165000.0
+    },
+    {
+      "date": "2026-03-01",
+      "description": "SALARY CREDIT ACME CORP PAYROLL",
+      "debit": "",
+      "credit": 78000,
+      "balance": 243000.0
+    },
+    {
+      "date": "2026-03-05",
+      "description": "EMI DEBIT HDFC HOME LOAN",
+      "debit": 12500,
+      "credit": "",
+      "balance": 230500.0
+    },
+    {
+      "date": "2026-03-07",
+      "description": "NEFT RENT PAYMENT LANDLORD",
+      "debit": 25000,
+      "credit": "",
+      "balance": 205500.0
+    },
+    {
+      "date": "2026-03-12",
+      "description": "UPI-BIGBASKET-GROCERIES",
+      "debit": 8000,
+      "credit": "",
+      "balance": 197500.0
+    },
+    {
+      "date": "2026-04-01",
+      "description": "SALARY CREDIT ACME CORP PAYROLL",
+      "debit": "",
+      "credit": 78000,
+      "balance": 275500.0
+    },
+    {
+      "date": "2026-04-05",
+      "description": "EMI DEBIT HDFC HOME LOAN",
+      "debit": 12500,
+      "credit": "",
+      "balance": 263000.0
+    },
+    {
+      "date": "2026-04-07",
+      "description": "NEFT RENT PAYMENT LANDLORD",
+      "debit": 25000,
+      "credit": "",
+      "balance": 238000.0
+    },
+    {
+      "date": "2026-04-12",
+      "description": "UPI-BIGBASKET-GROCERIES",
+      "debit": 8000,
+      "credit": "",
+      "balance": 230000.0
+    },
+    {
+      "date": "2026-05-01",
+      "description": "SALARY CREDIT ACME CORP PAYROLL",
+      "debit": "",
+      "credit": 78000,
+      "balance": 308000.0
+    },
+    {
+      "date": "2026-05-05",
+      "description": "EMI DEBIT HDFC HOME LOAN",
+      "debit": 12500,
+      "credit": "",
+      "balance": 295500.0
+    },
+    {
+      "date": "2026-05-07",
+      "description": "NEFT RENT PAYMENT LANDLORD",
+      "debit": 25000,
+      "credit": "",
+      "balance": 270500.0
+    },
+    {
+      "date": "2026-05-12",
+      "description": "UPI-BIGBASKET-GROCERIES",
+      "debit": 8000,
+      "credit": "",
+      "balance": 262500.0
+    },
+    {
+      "date": "2026-06-01",
+      "description": "SALARY CREDIT ACME CORP PAYROLL",
+      "debit": "",
+      "credit": 78000,
+      "balance": 340500.0
+    },
+    {
+      "date": "2026-06-05",
+      "description": "EMI DEBIT HDFC HOME LOAN",
+      "debit": 12500,
+      "credit": "",
+      "balance": 328000.0
+    },
+    {
+      "date": "2026-06-07",
+      "description": "NEFT RENT PAYMENT LANDLORD",
+      "debit": 25000,
+      "credit": "",
+      "balance": 303000.0
+    },
+    {
+      "date": "2026-06-12",
+      "description": "UPI-BIGBASKET-GROCERIES",
+      "debit": 8000,
+      "credit": "",
+      "balance": 295000.0
+    }
+  ]
+}

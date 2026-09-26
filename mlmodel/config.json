@@ -1,0 +1,28 @@
+{
+  "development": {
+    "database": {
+      "host": "localhost",
+      "port": 5432,
+      "name": "transaction_db_dev",
+      "user": "postgres",
+      "password": "dev_password"
+    },
+    "ml_engine": {
+      "confidence_threshold": 0.80,
+      "models_path": "./models"
+    }
+  },
+  "production": {
+    "database": {
+      "host": "prod-db.internal.finance.domain",
+      "port": 5432,
+      "name": "transaction_db_prod",
+      "user": "db_app_user",
+      "password": "prod_secure_password"
+    },
+    "ml_engine": {
+      "confidence_threshold": 0.80,
+      "models_path": "/var/app/models"
+    }
+  }
+}

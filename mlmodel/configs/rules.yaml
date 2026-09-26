@@ -1,0 +1,79 @@
+rules:
+  # Internal Fund Transfer / Self
+  - pattern: "*EBANK:SELF*"
+    category: "Internal Fund Transfer"
+  - pattern: "*AC XFR FROM SOL*"
+    category: "Internal Fund Transfer"
+
+  # Merchant Settlement & Customer Payment
+  - pattern: "*RESILIENT INNOVATIONS*"
+    category: "Customer Payment / NEFT Transfer"
+  - pattern: "*BHARATPEPPG*"
+    category: "Merchant Settlement"
+  - pattern: "*BHARATPE PAYOUTS*"
+    category: "Merchant Settlement"
+  - pattern: "*BHARATPE*"
+    category: "Merchant Settlement"
+
+  # Loan
+  - pattern: "*DISBURSEMENT CREDIT*"
+    category: "Loan Disbursement"
+  - pattern: "*LOAN RECOVERY*"
+    category: "Loan Repayment / EMI"
+
+  # Vendor & Supplier Payment
+  - pattern: "*CONCEPT STUDIO*"
+    category: "Vendor Payment"
+  - pattern: "*FINAL PAYMENT*"
+    category: "Vendor Payment"
+
+  # Bank Charges & Government Fee
+  - pattern: "*LEDGER FOLIO CHARGES*"
+    category: "Bank Charges"
+  - pattern: "*SMS ALERT*"
+    category: "Bank Charges"
+  - pattern: "*CGTMSE FEE*"
+    category: "Government Fee"
+
+  # Utilities & Food & Fuel & Shopping
+  - pattern: "*BESCOM*"
+    category: "Utility Payment"
+  - pattern: "*BWSSB*"
+    category: "Utility Payment"
+  - pattern: "*SWIGGY*"
+    category: "Food & Dining"
+  - pattern: "*ZOMATO*"
+    category: "Food & Dining"
+  - pattern: "*INDIAN OIL*"
+    category: "Fuel"
+  - pattern: "*HPCL*"
+    category: "Fuel"
+  - pattern: "*AMAZON*"
+    category: "POS/Card Purchase"
+  - pattern: "*FLIPKART*"
+    category: "POS/Card Purchase"
+  - pattern: "*IRCTC*"
+    category: "Travel"
+
+  # Payment Modes (NEFT / IMPS / UPI)
+  - pattern: "IMPS/*"
+    category: "IMPS Transfer"
+  - pattern: "NEFT-*"
+    category: "NEFT Transfer"
+  - pattern: "RTGS-*"
+    category: "RTGS Transfer"
+  - pattern: "UPI/*"
+    category: "UPI Transfer"
+
+  # Tax / Salary / ATM / Cash
+  - pattern: "*GST*"
+    category: "GST/Tax Payment"
+  - pattern: "*TDS*"
+    category: "GST/Tax Payment"
+  - pattern: "*SALARY*"
+    category: "Salary Payment"
+  - pattern: "*CASH DEPOSIT*"
+    category: "Cash Deposit"
+  - pattern: "*ATM*"
+    category: "ATM Withdrawal"
+
