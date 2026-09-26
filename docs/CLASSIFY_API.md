@@ -483,6 +483,25 @@ It starts from nothing: creates a client, issues a `classify:write`-only key,
 posts a statement with a ruleset, and asserts the categories that come back. See
 the script for what each step proves.
 
+### Classifying your own file
+
+To run one real statement through your own ruleset and read the result:
+
+```bash
+# with an admin token (mints a throwaway classify-only key for you):
+BASE_URL=http://localhost:8000 B2B_ADMIN_TOKEN=... \
+  scripts/classify_file.sh path/to/statement.csv path/to/rules.json
+
+# or with a key you already hold:
+B2B_API_KEY=kl_live_xxx scripts/classify_file.sh statement.pdf rules.json 'pdf-password'
+```
+
+It validates your rules JSON locally first, posts the file, and prints a
+per-row table (date, type, amount, category, method, rule) followed by the
+coverage summary, the rules that never matched, and a sample of unmatched
+narrations to write your next rule against. `scripts/example_rules.json` is a
+working ruleset to copy from.
+
 The automated suite is `tests/b2b/test_classify_api.py` (55 tests):
 
 ```bash
