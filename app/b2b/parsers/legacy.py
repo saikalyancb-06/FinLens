@@ -89,7 +89,106 @@ def _password_error(exc: Exception, password: Optional[str]) -> Optional[ApiErro
         return ApiError(PDF_PASSWORD_INVALID,
                         "the supplied password did not open this PDF")
     return ApiError(PDF_PASSWORD_REQUIRED,
-                    "this PDF is password-protected; resend it with the 'password' field")
+                    "this PDF is password-protected; resend it with the 'pdf_password' field")
+
+
+def _check_pdf_password(path: str, password: Optional[str]) -> None:
+    """Decide encryption up front, before the pipeline can swallow it.
+
+    The production pipeline catches the PDF libraries' encryption errors itself
+    and returns zero rows, so the `_password_error` mapping below never saw
+    them: a locked statement came back as NO_TRANSACTIONS_FOUND, and the client
+    had no way to learn that a password was all it needed. PyMuPDF answers the
+    question directly and cheaply (it reads the trailer, not the pages).
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:  # pragma: no cover - a hard dependency in requirements
+        return
+    try:
+        doc = fitz.open(path)
+    except Exception:  # noqa: BLE001 - corrupt file: let the pipeline report it
+        return
+    try:
+        if not doc.needs_pass:
+            return
+        if not password:
+            raise ApiError(PDF_PASSWORD_REQUIRED,
+                           "this PDF is password-protected; resend it with the "
+                           "'pdf_password' field")
+        if not doc.authenticate(password):
+            raise ApiError(PDF_PASSWORD_INVALID,
+                           "the supplied password did not open this PDF")
+    finally:
+        doc.close()
+
+
+def _parse_pdf_reconciled(path: str, password: Optional[str],
+                          currency: str) -> Optional[ParseOutput]:
+    """Bank PDFs through the balance-verified extractor (app/b2b/consolidate).
+
+    Used only when its rows reconcile completely — every checkable pair
+    satisfies previous balance ± amount = balance. On the real statements
+    supplied by Credit Lens that extractor read every row of every file, where
+    the pipeline below missed rows (e.g. 5 of 238 on an IOB net-banking
+    statement, none on two other IOB layouts) and needed ~15x the time and
+    memory on a 57-page Axis report. Anything it cannot reconcile falls back to
+    the pipeline, so this can only add coverage, never remove it.
+    """
+    try:
+        from app.b2b.consolidate.extract import CREDIT, continuity_score, extract_pdf
+        ex = extract_pdf(path, password=password)
+    except Exception as exc:  # noqa: BLE001 - the pipeline is the fallback
+        logger.info("[b2b.legacy] reconciled extractor declined %s: %s", os.path.basename(path), exc)
+        return None
+    ok, checked = continuity_score(ex.rows)
+    if not ex.rows or checked < 1 or ok != checked:
+        return None
+
+    rows = []
+    for i, r in enumerate(ex.rows):
+        amount = r.amount_paise / 100.0
+        rows.append({
+            "date": r.date.isoformat(),
+            "description": r.narration,
+            "debit": 0.0 if r.direction == CREDIT else amount,
+            "credit": amount if r.direction == CREDIT else 0.0,
+            "balance": (r.balance_paise / 100.0) if r.balance_paise is not None else 0.0,
+            "reference_number": r.reference,
+            "row_index": i,
+            "confidence": 1.0,
+        })
+    transactions, dropped = rows_to_canonical(rows, source_format="pdf", currency=currency)
+    if not transactions:
+        return None
+    # rows_to_canonical maps a 0.00 balance to None (the legacy row format
+    # cannot tell zero from absent). Here the balance is known and verified,
+    # so a genuine zero is restored.
+    by_index = {i: r for i, r in enumerate(ex.rows)}
+    for t in transactions:
+        src = by_index.get(t.row_index)
+        if src is not None and src.balance_paise is not None:
+            t.balance_paise = int(src.balance_paise)
+    output = ParseOutput(transactions=transactions)
+    output.rows_checked_for_continuity = checked
+    output.continuity_pass_rate = 1.0
+    output.continuity_passed = True
+    apply_row_quality_warnings(output, rows, rejected=0, dropped_undatable=dropped)
+    meta: Dict[str, Any] = {"currency": currency}
+    meta.update(observed_period(transactions))
+    if ex.meta.account_number:
+        meta["account_number"] = ex.meta.account_number
+    if ex.meta.bank_name:
+        meta["bank_name"] = ex.meta.bank_name
+    if ex.closing_paise is not None:
+        set_balance(meta, "closing_balance", ex.closing_paise / 100.0, basis="reported")
+    elif transactions[-1].balance_paise is not None:
+        set_balance(meta, "closing_balance", transactions[-1].balance_paise / 100.0,
+                    basis="last_row_balance")
+    if ex.opening_paise is not None:
+        set_balance(meta, "opening_balance", ex.opening_paise / 100.0, basis="reported")
+    output.statement_meta = meta
+    return output
 
 
 def _require_xls_engine() -> None:
@@ -117,6 +216,11 @@ def parse(path: str, *, password: Optional[str] = None,
     source_format = FORMAT_BY_EXTENSION.get(ext, "unknown")
     if ext == ".xls":
         _require_xls_engine()
+    if ext == ".pdf":
+        _check_pdf_password(path, password)
+        reconciled = _parse_pdf_reconciled(path, password, currency)
+        if reconciled is not None:
+            return reconciled
 
     try:
         result: Dict[str, Any] = get_pipeline().process_file_with_validation(

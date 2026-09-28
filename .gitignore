@@ -50,7 +50,13 @@ mlmodel/golden_reference.csv
 mlmodel/catboost_info/
 mlmodel/models/
 mlmodel/layer*/
-mlmodel/artifacts/
+# The two files the running service loads (app/categorization/ml_service.py)
+# MUST be committed: Render builds the image from git, and without them every
+# B2B response degrades to rules-only with a CLASSIFIER_DEGRADED warning.
+# `artifacts/*` (not `artifacts/`) so the re-includes below can take effect.
+mlmodel/artifacts/*
+!mlmodel/artifacts/categorizer_model.joblib
+!mlmodel/artifacts/model_metadata.json
 mlmodel/artifacts_backup*/
 mlmodel/models_existing_eval/
 mlmodel/models_newsheet_eval/

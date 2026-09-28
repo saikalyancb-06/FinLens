@@ -324,5 +324,127 @@ changes when classification or detection rules change, which can move an
 - Categorisation confidence depends on the ML artifact being present; without it
   the service falls back to rules only and says so via a `CLASSIFIER_DEGRADED`
   warning.
-- Async processing runs in-process. A restart loses queued work; the request row
-  is left in `processing` rather than being silently marked complete.
+- Async processing runs in-process. A restart loses queued work. A request
+  still `processing` after 30 minutes (`B2B_STUCK_REQUEST_MINUTES`) is marked
+  `failed` with `SERVICE_UNAVAILABLE` and its `Idempotency-Key` is released, so
+  retrying with the same key starts a fresh analysis.
+
+## 9. Housekeeping (runs inside the server process)
+
+`app/b2b/maintenance.py`, every 60 s (`B2B_MAINTENANCE_INTERVAL_SECONDS`):
+
+- **Retention.** Once `result_expires_at` passes (client's
+  `result_retention_hours`, default 24), the stored analysis — which contains
+  every transaction of the statement — is deleted. The request row, usage record
+  and idempotency fingerprint remain. `GET /v1/analyze/{id}` and an idempotent
+  replay then return `410`.
+- **Webhook retries.** A failed delivery is retried with backoff (30 s, 1 m,
+  2 m, … up to 6 attempts); 4xx other than 429 is not retried.
+- **Stuck requests.** See the async note above.
+
+Set `B2B_MAINTENANCE_ENABLED=false` to turn the loop off (the test suite does).
+
+---
+
+## 10. `POST /v1/statements/consolidate` — many statements, one reconciled list
+
+Built for the Credit Lens "bank statement → JSON" requirement. Send every
+statement of a case in one request (several `files` fields, or one ZIP); get
+back one record per unique transaction across all accounts, with duplicates
+removed and balance breaks flagged.
+
+`multipart/form-data`, scope `analyze:write`:
+
+| Field | Notes |
+|---|---|
+| `files` | Repeat once per file. PDF, XLSX/XLS, CSV/TSV, JSON, OFX, CAMT.053 — or a `.zip` of them (folders inside are fine; non-statement files are reported, not fatal). Up to 25 uploads / 150 MB. |
+| `passwords` | Optional JSON `{"file name": "password"}` for locked PDFs. |
+| `pdf_password` | Optional password tried on every locked PDF. |
+| `async_mode` | `true` → `202`, then `GET /v1/statements/consolidate/{request_id}`. Large batches (50+ pages) take 15–40 s synchronously. |
+| `include_duplicates` | `false` omits the list of removed rows. |
+
+`Idempotency-Key`, rate limits, error envelope and retention work exactly as on
+`/v1/analyze`.
+
+### One record per transaction (`data.transactions[]`)
+
+```json
+{
+  "bank_account_no": "922020061147994",
+  "bank_name": "Axis Bank",
+  "date": "2025-08-05",
+  "narration": "ACH/DR/DEUTSCHE BANK/350041556770019/UTIB00000000",
+  "amount": 87754.0,
+  "type": "Money Out",
+  "category_1": "EMI",
+  "category_2": "Deutsche",
+  "balance": 1269410.94,
+  "source_files": ["Account_Statement_Report_12-08-2026_1240hrs.PDF"],
+  "flags": []
+}
+```
+
+The first eight keys are the requirement's eight fields, in its order. Dates are
+ISO `YYYY-MM-DD`. `category_2` is `"No"` when there is nothing to add; for an
+internal transfer it is the other account number; for an EMI, the lender; for a
+transfer or payment, the counterparty.
+
+Category 1 values: `EMI`, `Loan Deduction` (bank loan recovery, OD/CC
+interest), `Loan Repayment`, `Loan Received`, `Internal Transfer`,
+`Salary Received`, `Salary Paid`, `Food Expenses`, `Travel Expenses`,
+`Shopping`, `Utility Bills`, `Medical Expenses`, `Education Expenses`,
+`Rent Paid`/`Rent Received`, `Cash Withdrawal`, `Cash Deposit`, `Bank Charges`,
+`Bounce Charges`, `Cheque/EMI Bounce`, `Payment Returned`, `Tax Payment`,
+`Tax Refund`, `Statutory Payment` (ESIC/EPF/PT), `Interest Received`,
+`Credit Card Payment`, `Insurance`, `Investment`, `Vendor Payment`,
+`Business Receipt`, `Cheque Payment`/`Cheque Deposit`, `Transfer In`/`Transfer Out`,
+`Other Debit`/`Other Credit`.
+
+### Check 1 — duplicates and internal transfers
+
+* Same account + date + amount + direction + balance, and the same narration
+  (ignoring case/spacing, allowing one bank format to truncate the other) = one
+  transaction. Each removed row is listed in `data.duplicates_removed` with the
+  file it came from and the file whose copy was kept.
+* Genuine same-day repeats differ in balance and are kept.
+* A statement downloaded part-way through a day contributes only the rows it
+  shares; the merged day has every row once, in the bank's order.
+* A byte-identical file uploaded twice is used once (`DUPLICATE_FILE` flag).
+* Money Out of one supplied account matched to Money In of another (same
+  amount, within 3 days, with evidence: a shared UTR/UPI reference, the other
+  account number, or the other account holder's name in the narration) is kept
+  on both sides and tagged `Internal Transfer`, `category_2` = the other account.
+  Equal amounts with no such evidence are not paired.
+
+### Check 2 — balance reconciliation (`data.flags[]`)
+
+| `type` | Meaning |
+|---|---|
+| `MISSING_TRANSACTIONS_BETWEEN_STATEMENTS` | The last balance of one statement and the next entry of the following statement do not follow (Example 4). `date`, `difference`, both file names. |
+| `BALANCE_BREAK_WITHIN_STATEMENT` | Previous balance ± amount ≠ balance inside one statement: a row missed or misread. |
+| `CLOSING_BALANCE_MISMATCH` | Opening + Σ entries ≠ the statement's printed closing balance (Example 5). |
+| `OPENING_BALANCE_MISMATCH` | The printed opening balance does not lead to the first entry. |
+| `DUPLICATE_FILE` | The same file was supplied twice. |
+
+The affected transaction also carries the flag in its own `flags` array.
+`data.statements[]` gives each statement's opening, totals, computed and stated
+closing balance and `status` (`PASSED`/`FAILED`/`NOT_VERIFIABLE`);
+`data.accounts[]` gives per-account period, totals and `balance_check`.
+
+### Supported layouts (verified)
+
+Checked end to end on the Credit Lens samples (Case 2 and Case 3, 15 PDFs,
+4,424 rows) — every running balance in every statement below reconciles to the
+paisa, and printed opening and closing balances match where the statement prints them:
+
+| Bank | Layouts |
+|---|---|
+| Axis Bank | CA statement (Amount + DR/CR), CC/OD statement (Debit/Credit, negative balance), "Account Statement Report" |
+| Indian Overseas Bank | Branch printout (fixed-width, no header), passbook-style mobile statement (newest first, Cr/Dr suffixes), net-banking statement, "Date(Value Date)" statement (newest first) |
+| State Bank of India | Statement of Account (Brought Forward / Closing Balance) |
+| Bank of Baroda | bob World statement (serial numbers, bilingual header) |
+
+Other banks' ruled-table and text layouts go through the same two strategies
+and are accepted when their balances reconcile; check the `statements[].status`
+on a new layout before relying on it. CLI equivalent:
+`python scripts/consolidate_statements.py <folder|zip|files> -o out.json`.

@@ -104,6 +104,11 @@ claiming a clean result — that distinction is the point.
   a `400` on purpose.
 - **Analyze — async**: returns `202` immediately, then poll
   **Get result by request_id** (the `request_id` is saved for you).
+- **Consolidate — several statements**: `POST /v1/statements/consolidate`,
+  the multi-statement tool (docs/B2B_API.md §10). Attach every statement of a
+  case — repeat the `files` row, or attach one `.zip`. The sample sends the CSV
+  and TSV copies of the same statement, so it must report 24 duplicates removed
+  and 24 transactions kept, each with the eight required fields.
 - **Analyze — idempotent**: send it twice with the same file — the second
   response carries `Idempotent-Replay: true` and is not reprocessed. Send it
   with a *different* file and the same key and you get `409`.
@@ -168,7 +173,7 @@ collection, so the interactive copy leaves it blank for you to pick; Newman
 can, so the automated copy fills it in. Requests, tests and assertions are
 otherwise identical.
 
-Expect **19 requests, 17 assertions, 0 failures**. Run it twice — the second
+Expect **20 requests, 21 assertions, 0 failures**. Run it twice — the second
 run is the interesting one, because it exercises two paths the first cannot:
 `1. Create client` returns `409` (the slug is taken), and the idempotent
 request logs `replay: 'true'` instead of reprocessing the file.

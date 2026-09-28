@@ -48,7 +48,10 @@ def get_url() -> str:
             f"Refusing to run migrations against a '{scheme}' database. This project "
             "is PostgreSQL-only; the migration scripts assume PostgreSQL semantics."
         )
-    return url
+    # Same driver pinning as the application (psycopg2), so `alembic upgrade`
+    # does not need a second PostgreSQL driver installed under SQLAlchemy 2.1+.
+    from app.database.session import normalize_postgres_url
+    return normalize_postgres_url(url)
 
 
 # Feed ORM metadata to Alembic for autogenerate

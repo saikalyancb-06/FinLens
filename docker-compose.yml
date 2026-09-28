@@ -91,6 +91,10 @@ services:
       # limiter; left off BEHIND a proxy, every request looks like it came from
       # the proxy and all users share one rate-limit bucket.
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+      # Admin token for /internal/clients (B2B client + API key issuance).
+      # Optional: empty leaves the admin router refusing every call (503),
+      # which is the safe default; set it (>= 16 chars) to issue keys.
+      B2B_ADMIN_TOKEN: ${B2B_ADMIN_TOKEN:-}
       JWT_ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 30
       REFRESH_TOKEN_EXPIRE_DAYS: 7

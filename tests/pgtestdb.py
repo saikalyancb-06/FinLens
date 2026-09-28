@@ -59,19 +59,33 @@ def _with_database(url: str, dbname: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, f"/{dbname}", parts.query, parts.fragment))
 
 
+def _pin_driver(url: str) -> str:
+    """Force psycopg2, matching app.database.session.normalize_postgres_url.
+
+    Duplicated rather than imported: this module must not import anything under
+    `app` before conftest has pointed DATABASE_URL at the test database.
+    """
+    if "://" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    if scheme.lower() in ("postgres", "postgresql"):
+        return f"postgresql+psycopg2://{rest}"
+    return url
+
+
 def test_database_url() -> str:
     """URL of the database the suite should use."""
     explicit = os.getenv("TEST_DATABASE_URL")
     if explicit:
-        return explicit
-    base = os.getenv("DATABASE_URL", DEFAULT_URL)
+        return _pin_driver(explicit)
+    base = _pin_driver(os.getenv("DATABASE_URL", DEFAULT_URL))
     return _with_database(base, os.getenv("TEST_DATABASE_NAME", "backend_test_db"))
 
 
 def _admin_url() -> str:
     explicit = os.getenv("TEST_DATABASE_ADMIN_URL")
     if explicit:
-        return explicit
+        return _pin_driver(explicit)
     return _with_database(test_database_url(), "postgres")
 
 

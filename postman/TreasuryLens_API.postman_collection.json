@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "Treasury Lens \u2014 Financial Analysis API (v1)",
-    "description": "B2B statement-analysis API.\n\nSETUP (in order):\n1. Start the server with B2B_ADMIN_TOKEN set.\n2. Run 'Admin > 1. Create client' \u2014 once.\n3. Run 'Admin > 2. Issue API key' \u2014 the secret is shown ONCE and is\n   saved automatically into the {{api_key}} variable by a test script.\n4. Everything under 'Analyze' now works.\n\nIn every Analyze request, click the 'file' row under Body > form-data\nand choose a file \u2014 Postman cannot store a file path in a collection.",
+    "name": "Treasury Lens — Financial Analysis API (v1)",
+    "description": "B2B statement-analysis API.\n\nSETUP (in order):\n1. Start the server with B2B_ADMIN_TOKEN set.\n2. Run 'Admin > 1. Create client' — once.\n3. Run 'Admin > 2. Issue API key' — the secret is shown ONCE and is\n   saved automatically into the {{api_key}} variable by a test script.\n4. Everything under 'Analyze' now works.\n\nIn every Analyze request, click the 'file' row under Body > form-data\nand choose a file — Postman cannot store a file path in a collection.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -156,7 +156,7 @@
                 "clients"
               ]
             },
-            "description": "Run once. A repeat returns 409 because the slug is taken \u2014 that is fine.",
+            "description": "Run once. A repeat returns 409 because the slug is taken — that is fine.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"Credit Lens\",\n  \"slug\": \"{{client_slug}}\",\n  \"contact_email\": \"dev@creditlens.example\",\n  \"rate_limit_per_minute\": 120,\n  \"rate_limit_per_day\": 5000\n}",
@@ -288,7 +288,7 @@
       "name": "Analyze",
       "item": [
         {
-          "name": "Analyze \u2014 CSV / XLSX / PDF (basic)",
+          "name": "Analyze — CSV / XLSX / PDF (basic)",
           "request": {
             "method": "POST",
             "header": [
@@ -380,7 +380,7 @@
           ]
         },
         {
-          "name": "Analyze \u2014 with loan (affordability)",
+          "name": "Analyze — with loan (affordability)",
           "request": {
             "method": "POST",
             "header": [
@@ -453,7 +453,7 @@
           ]
         },
         {
-          "name": "Analyze \u2014 async (202 + poll)",
+          "name": "Analyze — async (202 + poll)",
           "request": {
             "method": "POST",
             "header": [
@@ -504,7 +504,7 @@
           ]
         },
         {
-          "name": "Analyze \u2014 idempotent (send twice)",
+          "name": "Analyze — idempotent (send twice)",
           "request": {
             "method": "POST",
             "header": [
@@ -553,6 +553,90 @@
                 "exec": [
                   "const replay = pm.response.headers.get('Idempotent-Replay');",
                   "console.log('replay:', replay || 'no (first call)');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consolidate — several statements (dedupe + balance check)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/statements/consolidate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "statements",
+                "consolidate"
+              ]
+            },
+            "description": "Credit Lens multi-statement tool. Attach every statement of a case (repeat the 'files' row) or one .zip. Returns one record per unique transaction with the 8 required fields, duplicates removed, internal transfers tagged, and balance breaks flagged with date and difference. See docs/B2B_API.md §10.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": [],
+                  "description": "First statement"
+                },
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": [],
+                  "description": "Second statement (add as many 'files' rows as you have, or one .zip)"
+                },
+                {
+                  "key": "account_numbers",
+                  "type": "text",
+                  "value": "{\"sample_statement.csv\": \"SAMPLE0001\", \"sample_statement.tsv\": \"SAMPLE0001\"}",
+                  "description": "Only needed for CSV/JSON exports that do not print an account number. Not needed for bank PDFs."
+                },
+                {
+                  "key": "pdf_password",
+                  "type": "text",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "async_mode",
+                  "type": "text",
+                  "value": "false",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "const s = b.data.summary;",
+                  "console.log('files:', s.files_processed, '| accounts:', s.accounts, '| rows read:', s.transactions_extracted,",
+                  "            '| duplicates removed:', s.duplicates_removed, '| output:', s.transactions_output, '|', s.balance_check);",
+                  "pm.test('CSV and TSV are the same 24 rows: 24 duplicates removed, 24 kept', () => {",
+                  "  pm.expect(s.duplicates_removed).to.eql(24);",
+                  "  pm.expect(s.transactions_output).to.eql(24);",
+                  "});",
+                  "pm.test('balances flow', () => pm.expect(s.balance_check).to.eql('PASSED'));",
+                  "pm.test('eight required fields on every record', () => {",
+                  "  const keys = ['bank_account_no','bank_name','date','narration','amount','type','category_1','category_2'];",
+                  "  b.data.transactions.forEach(t => keys.forEach(k => pm.expect(t).to.have.property(k)));",
+                  "});",
+                  "console.log('first record:', JSON.stringify(b.data.transactions[0]));"
                 ]
               }
             }

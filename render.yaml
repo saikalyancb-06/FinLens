@@ -95,6 +95,14 @@ services:
       - key: JWT_SECRET_KEY
         generateValue: true
 
+      # Guards /internal/clients — the only way to create B2B API clients and
+      # issue their keys. app/b2b/admin.py refuses every admin call with 503
+      # when this is unset (it never defaults open), so without it a fresh
+      # deploy has a working /v1 API that nobody can get a key for. Render
+      # mints it; read it from the dashboard when you need to issue a key.
+      - key: B2B_ADMIN_TOKEN
+        generateValue: true
+
       # The public origin(s) the browser will load the app from. The UI is
       # served by this same service, so this only matters if you add a separate
       # frontend host. Replace the placeholder before the first deploy.

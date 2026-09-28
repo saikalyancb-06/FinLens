@@ -43,7 +43,29 @@ def _require_postgres(url: str) -> str:
     return url
 
 
-SQLALCHEMY_DATABASE_URL = _require_postgres(SQLALCHEMY_DATABASE_URL)
+def normalize_postgres_url(url: str) -> str:
+    """Pin the DBAPI driver to psycopg2, the one requirements.txt installs.
+
+    SQLAlchemy 2.1 changed what a bare ``postgresql://`` URL means: it now loads
+    psycopg (v3) instead of psycopg2. requirements.txt allows ``sqlalchemy>=2.0``
+    and installs only ``psycopg2-binary``, so a fresh build (Docker, Render)
+    picked up 2.1 and died at import with ``No module named 'psycopg'`` — the
+    process never started. Naming the driver explicitly makes the URL mean the
+    same thing on every SQLAlchemy version.
+
+    ``postgres://`` (the Heroku-style scheme some platforms still hand out) is
+    rewritten too; SQLAlchemy rejects it outright. A URL that already names a
+    driver (``postgresql+psycopg://`` etc.) is left alone.
+    """
+    if "://" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    if scheme.lower() in ("postgres", "postgresql"):
+        return f"postgresql+psycopg2://{rest}"
+    return url
+
+
+SQLALCHEMY_DATABASE_URL = normalize_postgres_url(_require_postgres(SQLALCHEMY_DATABASE_URL))
 
 
 def build_engine(url: str = SQLALCHEMY_DATABASE_URL):

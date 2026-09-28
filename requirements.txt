@@ -1,33 +1,55 @@
-fastapi>=0.100.0
-uvicorn[standard]>=0.22.0
-pydantic>=2.0.0
-sqlalchemy>=2.0.0
-alembic>=1.11.0
-psycopg2-binary>=2.9.6
-pyjwt>=2.7.0
-passlib[argon2,bcrypt]>=1.7.4
-python-multipart>=0.0.6
-pandas>=2.0.0
-openpyxl>=3.1.2
-pdfplumber>=0.9.0
-pymupdf>=1.22.0
-pytesseract>=0.3.10
-pdf2image>=1.16.3
-Pillow>=9.5.0
-scikit-learn>=1.3.0
-joblib>=1.3.0
-numpy>=1.24.0
-fpdf2>=2.7.4
-reportlab>=4.0.0
-redis>=4.6.0
-pytest>=7.4.0
-httpx>=0.24.1
-playwright>=1.40.0
-cryptography>=41.0.0
-python-dotenv>=1.0.0
-dnspython>=2.0.0
-# Test-only: lets tests/test_production_hardening.py model two backend
-# processes against one Redis without needing a Redis server in CI.
-fakeredis>=2.20.0
-xlrd>=2.0.1
-defusedxml>=0.7.1
+# Pinned to the exact versions the full test suite (1,250 tests) and the live
+# B2B API check passed on, 2026-09-28, Python 3.11 (the Dockerfile's base).
+#
+# These were previously open-ended (`>=`), which is how three production
+# breakages were waiting in a fresh build:
+#   * SQLAlchemy 2.1 made a bare postgresql:// URL load psycopg v3, which is not
+#     installed -> the server died at import. (Also fixed in code:
+#     app/database/session.py::normalize_postgres_url pins psycopg2.)
+#   * bcrypt 5 breaks passlib's bcrypt backend -> verifying any legacy bcrypt
+#     password hash raised ValueError. Held at 4.0.1.
+#   * scikit-learn must match the version the categoriser artefact was pickled
+#     with (mlmodel/artifacts/model_metadata.json) -> 1.9.0.
+# Upgrade deliberately: bump, run `pytest`, then commit.
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+pydantic==2.13.5
+sqlalchemy==2.1.1
+alembic==1.20.0
+psycopg2-binary==2.9.13
+pyjwt==2.15.0
+passlib[argon2]==1.7.4
+argon2-cffi==25.1.0
+bcrypt==4.0.1
+python-multipart==0.0.32
+pandas==3.0.6
+openpyxl==3.1.5
+pdfplumber==0.11.10
+pymupdf==1.28.2
+pytesseract==0.3.13
+pdf2image==1.17.0
+Pillow==12.3.0
+scikit-learn==1.9.0
+joblib==1.6.0
+numpy==2.4.6
+fpdf2==2.8.8
+reportlab==5.0.1
+redis==8.1.0
+httpx==0.28.1
+playwright==1.63.0
+cryptography==50.0.1
+python-dotenv==1.2.3
+dnspython==2.8.0
+xlrd==2.0.2
+defusedxml==0.7.1
+# pandas.read_html needs lxml: many Indian banks export "Excel" statements that
+# are really HTML tables (app/parsers/excel_csv_parser.py). Without it those
+# files parse to zero rows. bs4 + lxml are also the RBI FX-rate scraper
+# (app/currency/sources/rbi.py).
+lxml==6.1.3
+beautifulsoup4==4.15.0
+
+# Test-only. fakeredis lets tests/test_production_hardening.py model two
+# backend processes against one Redis without needing a Redis server in CI.
+pytest==9.1.1
+fakeredis==2.38.0

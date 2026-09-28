@@ -81,7 +81,14 @@ def _path_matching_format(path: str, detected) -> str:
     return aligned
 
 
-def run_analysis(ingested: IngestedFile,
+def run_analysis(ingested: IngestedFile, **kwargs) -> "AnalysisOutcome":
+    """Public entry point: waits for a processing slot (app/b2b/jobs.py)."""
+    from app.b2b.jobs import heavy_slot
+    with heavy_slot():
+        return _run_analysis(ingested, **kwargs)
+
+
+def _run_analysis(ingested: IngestedFile,
                  *,
                  request_id: str,
                  password: Optional[str] = None,

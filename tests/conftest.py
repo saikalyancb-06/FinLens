@@ -20,6 +20,10 @@ os.environ.setdefault("DB_AUTO_CREATE", "false")
 # the refresher starts with every TestClient and the suite's behaviour depends on
 # whether a poll happens to fire before the test finishes.
 os.environ["FX_REFRESH_ENABLED"] = "false"
+# Same for the B2B housekeeping loop: it would purge/reap rows in the shared
+# test database on its own schedule. Its jobs are tested directly instead
+# (tests/b2b/test_maintenance.py).
+os.environ["B2B_MAINTENANCE_ENABLED"] = "false"
 
 from sqlalchemy import create_engine  # noqa: E402
 

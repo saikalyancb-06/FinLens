@@ -26,6 +26,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.b2b import errors, ingest, metering, ratelimit, webhooks
 from app.b2b.auth import AuthContext, api_key_auth, require_scope
@@ -317,7 +318,8 @@ async def analyze_endpoint(
     started = datetime.datetime.now(datetime.timezone.utc)
 
     try:
-        ingested = ingest.save_upload(file, max_bytes=max_bytes, tmp_dir=tmp_dir)
+        ingested = await run_in_threadpool(ingest.save_upload, file, max_bytes=max_bytes,
+                                           tmp_dir=tmp_dir)
         ingested.detected = detect_format(ingested.filename, ingested.head_bytes,
                                           ingested.path)
 
@@ -335,7 +337,15 @@ async def analyze_endpoint(
                 detected_format=outcome.request.detected_format,
                 transaction_count=outcome.request.transaction_count)
             response.headers["Idempotent-Replay"] = "true"
-            return _envelope(outcome.request, stored_result(outcome.request))
+            replayed = stored_result(outcome.request)
+            if (outcome.request.status == RequestStatus.COMPLETED
+                    and replayed is None):
+                # Same answer GET /v1/analyze/{id} gives: the original result
+                # has passed retention. Returning a "completed" envelope with
+                # no data would read as an empty analysis.
+                return _expired_response(outcome.request,
+                                         {"Idempotent-Replay": "true"})
+            return _envelope(outcome.request, replayed)
 
         req = outcome.request
         request.state.b2b_request_id = req.request_id
@@ -371,7 +381,11 @@ async def analyze_endpoint(
                     "poll_url": f"/v1/analyze/{req.request_id}"}
 
         try:
-            result = run_analysis(ingested, request_id=req.request_id, **params)
+            # In the thread pool, not on the event loop: a large or scanned PDF
+            # takes seconds to minutes, and running it inline stalled every
+            # other request (health checks included) for that long.
+            result = await run_in_threadpool(run_analysis, ingested,
+                                             request_id=req.request_id, **params)
         except ApiError as exc:
             idem_fail(db, req, exc.code, exc.message)
             metering.record_usage(db, ctx, endpoint="/v1/analyze", method="POST",
@@ -426,13 +440,18 @@ def get_analysis(request_id: str,
     payload = stored_result(req)
     if req.status == RequestStatus.COMPLETED and payload is None:
         # Retention has cleared it. Say so rather than returning an empty result.
-        body = _envelope(req)
-        body["status"] = "expired"
-        body["message"] = ("The result has passed its retention window and is "
-                           "no longer stored. Submit the file again to re-analyse it.")
-        return JSONResponse(status_code=410, content=body)
+        return _expired_response(req)
 
     return _envelope(req, payload)
+
+
+def _expired_response(req: AnalysisRequest,
+                      headers: Optional[Dict[str, str]] = None) -> JSONResponse:
+    body = _envelope(req)
+    body["status"] = "expired"
+    body["message"] = ("The result has passed its retention window and is "
+                       "no longer stored. Submit the file again to re-analyse it.")
+    return JSONResponse(status_code=410, content=body, headers=headers)
 
 
 @router.get("/usage", summary="This client's API usage")

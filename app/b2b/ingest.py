@@ -109,7 +109,8 @@ def _reader(upload_file: Any):
     return stream.read
 
 
-def save_upload(upload_file: Any, *, max_bytes: int, tmp_dir: str) -> IngestedFile:
+def save_upload(upload_file: Any, *, max_bytes: int, tmp_dir: str,
+                allow_archive: bool = False) -> IngestedFile:
     """Stream an upload into a fresh temp directory, or fail before it fills one.
 
     The size check happens *during* the copy, not after it: as soon as the
@@ -179,7 +180,7 @@ def save_upload(upload_file: Any, *, max_bytes: int, tmp_dir: str) -> IngestedFi
     detected = detect_format(filename, head, full_path=target)
     ingested.detected = detected
 
-    if detected.format == F_ZIP:
+    if detected.format == F_ZIP and not allow_archive:
         # Refused at intake rather than at dispatch. The legacy allowlist takes
         # .zip and fails several layers deeper with a message the client cannot
         # act on; this is a 415 with an instruction.

@@ -285,12 +285,20 @@ def continuity_check(txns: Sequence[CanonicalTxn],
     Sub-rupee drift is a rounding artefact of a statement that prints two
     decimals; anything larger is a real break.
     """
-    rows = [t for t in sorted_rows(txns) if t.balance_paise is not None]
-    if len(rows) < 2:
+    ordered = list(sorted_rows(txns))
+    # Only ADJACENT rows that both state a balance form a pair. Filtering the
+    # balance-less rows out first (as this used to) bridged across them, so a
+    # row whose balance was unknown — or exactly 0.00, which the legacy row
+    # format cannot tell apart from "no balance" — produced a guaranteed false
+    # break worth that row's amount (seen on a Bank of Baroda loan-sweep
+    # account that hits 0.00 each month).
+    pairs_list = [(p, c) for p, c in zip(ordered, ordered[1:])
+                  if p.balance_paise is not None and c.balance_paise is not None]
+    if not pairs_list:
         return {"verifiable": False, "pairs": 0, "matched": 0, "breaks": []}
 
     matched, breaks = 0, []
-    for prev, cur in zip(rows, rows[1:]):
+    for prev, cur in pairs_list:
         delta = int(cur.balance_paise) - int(prev.balance_paise)
         drift = abs(delta - cur.signed_paise)
         if drift <= tolerance_paise:
@@ -305,6 +313,6 @@ def continuity_check(txns: Sequence[CanonicalTxn],
             })
             cur.balance_anomaly = True
 
-    pairs = len(rows) - 1
+    pairs = len(pairs_list)
     return {"verifiable": True, "pairs": pairs, "matched": matched,
             "breaks": breaks, "score": matched / pairs if pairs else 0.0}

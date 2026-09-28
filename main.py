@@ -53,6 +53,7 @@ from app.api.categories import router as categories_router
 # there is a scaling reason to would mean shipping that code twice.
 from app.b2b.router import router as b2b_router
 from app.b2b.admin import router as b2b_admin_router
+from app.b2b.consolidate_router import router as b2b_consolidate_router
 import app.b2b.models  # noqa: F401 — registers the API tables on Base.metadata
 
 # Honours DB_AUTO_CREATE, exactly as app/database/session.py does. This call used
@@ -170,9 +171,26 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("[FX] rate refresh disabled (FX_REFRESH_ENABLED=false)")
 
+    # B2B housekeeping: result retention, webhook retries, stuck-request
+    # reaping. See app/b2b/maintenance.py for why each exists.
+    b2b_stop = None
+    b2b_task = None
+    if os.getenv("B2B_MAINTENANCE_ENABLED", "true").lower() == "true":
+        from app.b2b.maintenance import maintenance_loop
+
+        b2b_stop = asyncio.Event()
+        b2b_task = asyncio.create_task(maintenance_loop(b2b_stop))
+        logger.info("[B2B] maintenance loop started")
+
     try:
         yield
     finally:
+        if b2b_stop is not None and b2b_task is not None:
+            b2b_stop.set()
+            try:
+                await asyncio.wait_for(b2b_task, timeout=10)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                b2b_task.cancel()
         if stop_event is not None and task is not None:
             stop_event.set()
             try:
@@ -258,6 +276,15 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "127.0.0.1"
 
 
+# The B2B API's own routes. Not simply "/v1/": the internal UI's categories,
+# bank-master, review-queue, reconciliation and deduplication routers live under
+# /v1 too, and their callers expect the {"detail": ...} shape.
+_B2B_PATH_PREFIXES = (
+    "/v1/analyze", "/v1/usage", "/v1/health", "/v1/ready", "/v1/version",
+    "/v1/formats", "/v1/statements", "/internal/clients",
+)
+
+
 @app.middleware("http")
 async def rate_limiting_middleware(request: Request, call_next):
     global _last_rate_limit_sweep
@@ -280,6 +307,22 @@ async def rate_limiting_middleware(request: Request, call_next):
 
     if len(rate_limit_records[client_ip]) >= settings.RATE_LIMIT_PER_MINUTE:
         logger.warning(f"[Rate Limit Exceeded] Client IP {client_ip} reached limit.")
+        if request.url.path.startswith(_B2B_PATH_PREFIXES):
+            # B2B callers are promised one error shape (docs/B2B_API.md §4):
+            # switch on error.code, quote request_id. This per-IP limiter runs
+            # before the API's own per-client limiter, so without this branch
+            # an integrator saw {"detail": ...} with no code, no request_id and
+            # no Retry-After — the one 429 their client could not parse.
+            rid = getattr(request.state, "b2b_request_id", None)
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"error": {
+                    "code": "RATE_LIMIT_EXCEEDED",
+                    "message": "Too many requests from this IP address. "
+                               "Retry after 60 seconds.",
+                    "request_id": rid}},
+                headers={"Retry-After": "60"},
+            )
         return JSONResponse(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             content={"detail": "Too many requests. Rate limit exceeded. Please try again in a minute."}
@@ -358,6 +401,7 @@ app.include_router(categories_router)
 # session cookie the internal UI uses, so it is registered with no dependency
 # override and does its own auth per route.
 app.include_router(b2b_router)
+app.include_router(b2b_consolidate_router)
 app.include_router(b2b_admin_router)
 
 

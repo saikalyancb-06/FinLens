@@ -102,6 +102,15 @@ def stored_result(request: Optional[AnalysisRequest]) -> Any:
     """The analysis payload held by a request row, envelope removed."""
     if request is None or request.result is None:
         return None
+    # Retention is enforced on read as well as by the purge job
+    # (app/b2b/maintenance.py), so an expired result is never served in the gap
+    # between expiry and the next purge pass.
+    expires = request.result_expires_at
+    if expires is not None:
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=datetime.timezone.utc)
+        if expires <= datetime.datetime.now(datetime.timezone.utc):
+            return None
     result = request.result
     if isinstance(result, dict) and _ENVELOPE_KEY in result:
         return result.get("payload")
@@ -289,7 +298,7 @@ def _replay_or_conflict(existing: AnalysisRequest,
         raise ApiError(
             err.REQUEST_IN_PROGRESS,
             "A request with this Idempotency-Key is still being processed. "
-            f"Poll /v1/requests/{existing.request_id} for the result.",
+            f"Poll /v1/analyze/{existing.request_id} for the result.",
             detail={"request_id": existing.request_id,
                     "status": existing.status.value},
         )
