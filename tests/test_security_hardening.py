@@ -254,7 +254,7 @@ def test_10b_unreachable_database_raises_rather_than_falling_back():
     settings.DB_CONNECT_RETRIES = 1  # keep the test fast
     try:
         broken = create_engine(
-            "postgresql://postgres:postgres@localhost:59999/non_existent_db",
+            "postgresql+psycopg2://postgres:postgres@localhost:59999/non_existent_db",
             connect_args={"connect_timeout": 2},
         )
         with pytest.raises(RuntimeError) as exc_info:
