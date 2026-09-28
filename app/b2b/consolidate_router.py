@@ -32,13 +32,14 @@ from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.b2b import errors, ingest, metering, ratelimit
-from app.b2b.auth import AuthContext, api_key_auth, require_scope
+from app.b2b.auth import AuthContext, api_key_auth, require_any_scope, require_scope
 from app.b2b.errors import ApiError
 from app.b2b.idempotency import (
     begin as idem_begin, complete as idem_complete, fail as idem_fail, stored_result,
 )
 from app.b2b.models import AnalysisRequest, RequestStatus
-from app.b2b.router import MAX_UPLOAD_BYTES, SCOPE_READ, SCOPE_WRITE, _envelope, _expired_response
+from app.b2b.router import (MAX_UPLOAD_BYTES, SCOPE_CLASSIFY, SCOPE_READ, SCOPE_WRITE, _envelope,
+                            _expired_response)
 from app.database.session import SessionLocal, get_db
 
 logger = logging.getLogger("b2b.consolidate.api")
@@ -58,12 +59,12 @@ def _payload(result: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _run(files: List[tuple], passwords: Dict[str, str], default_password: Optional[str],
-         account_numbers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+         account_numbers: Optional[Dict[str, str]] = None, ruleset=None) -> Dict[str, Any]:
     from app.b2b.consolidate.service import consolidate
     from app.b2b.jobs import heavy_slot
     with heavy_slot():
         result = consolidate(files, passwords=passwords, default_password=default_password,
-                             account_numbers=account_numbers)
+                             account_numbers=account_numbers, ruleset=ruleset)
     if result["summary"]["files_processed"] == 0:
         first = next((f.get("error") for f in result["files"] if f.get("error")), None) or {}
         raise ApiError(first.get("code") or errors.NO_TRANSACTIONS_FOUND,
@@ -74,7 +75,7 @@ def _run(files: List[tuple], passwords: Dict[str, str], default_password: Option
 
 def _worker(request_id: str, files: List[tuple], tmp_dir: str, passwords: Dict[str, str],
             default_password: Optional[str], retention_hours: int,
-            account_numbers: Optional[Dict[str, str]] = None) -> None:
+            account_numbers: Optional[Dict[str, str]] = None, ruleset=None) -> None:
     db = SessionLocal()
     try:
         req = db.query(AnalysisRequest).filter(AnalysisRequest.request_id == request_id).first()
@@ -82,7 +83,7 @@ def _worker(request_id: str, files: List[tuple], tmp_dir: str, passwords: Dict[s
             return
         started = datetime.datetime.now(datetime.timezone.utc)
         try:
-            result = _run(files, passwords, default_password, account_numbers)
+            result = _run(files, passwords, default_password, account_numbers, ruleset)
         except ApiError as exc:
             idem_fail(db, req, exc.code, exc.message)
             return
@@ -106,6 +107,8 @@ async def consolidate_endpoint(
     files: List[UploadFile] = File(..., description="One or more statement files (repeat the 'files' field)."),
     passwords: Optional[str] = Form(None, description='JSON object {"file name": "password"}'),
     pdf_password: Optional[str] = Form(None, description="Password tried on every locked PDF."),
+    rules: Optional[str] = Form(None, description="Optional ruleset JSON, same format as POST /v1/classify "
+                                "(GET /v1/classify/schema). Matching rules set Category 1."),
     account_numbers: Optional[str] = Form(None, description='JSON {"file name": "account no"}, for files '
                                           'that do not print one (CSV/JSON exports)'),
     include_duplicates: Optional[str] = Form(None),
@@ -113,7 +116,15 @@ async def consolidate_endpoint(
     ctx: AuthContext = Depends(api_key_auth),
     db: Session = Depends(get_db),
 ):
-    require_scope(ctx, SCOPE_WRITE)
+    # Consolidation returns classified rows, the same kind of output as
+    # /v1/classify, so a classify-only key may use it as well as an analyze key.
+    require_any_scope(ctx, [SCOPE_CLASSIFY, SCOPE_WRITE])
+    # Validate the ruleset before reading any upload: a typo in a rule should
+    # cost one fast 400, not a 100 MB transfer.
+    ruleset = None
+    if rules:
+        from app.b2b.rules import load_ruleset
+        ruleset = load_ruleset(rules)
     state = ratelimit.check_and_consume(ctx.client)
     for k, v in ratelimit.headers_for(state).items():
         response.headers[k] = v
@@ -172,6 +183,7 @@ async def consolidate_endpoint(
             raise ApiError(errors.INVALID_PARAMETER, f"At most {MAX_FILES * 4} statement files per request.")
 
         fp = hashlib.sha256(json.dumps({"files": sorted(s[2] for s in saved), "accounts": acct_map,
+                                        "rules": hashlib.sha256((rules or "").encode()).hexdigest(),
                                         "dups": want_dups, "op": "consolidate"},
                                        sort_keys=True).encode()).hexdigest()
         outcome = idem_begin(db, ctx.client, request.headers.get("Idempotency-Key"), fp)
@@ -193,7 +205,7 @@ async def consolidate_endpoint(
 
         if want_async:
             background.add_task(_worker, req.request_id, pairs, tmp_dir, pw_map, pdf_password,
-                                ctx.client.result_retention_hours, acct_map)
+                                ctx.client.result_retention_hours, acct_map, ruleset)
             handed_off = True
             metering.record_usage(db, ctx, endpoint="/v1/statements/consolidate", method="POST",
                                   status_code=202, succeeded=True, request_id=req.request_id,
@@ -210,7 +222,7 @@ async def consolidate_endpoint(
             # waited for the whole batch (measured: /health took 17 s during a
             # 20 s consolidation), and a platform health check could restart
             # the instance mid-request.
-            result = await run_in_threadpool(_run, pairs, pw_map, pdf_password, acct_map)
+            result = await run_in_threadpool(_run, pairs, pw_map, pdf_password, acct_map, ruleset)
         except ApiError as exc:
             idem_fail(db, req, exc.code, exc.message)
             metering.record_usage(db, ctx, endpoint="/v1/statements/consolidate", method="POST",
@@ -236,5 +248,14 @@ async def consolidate_endpoint(
 @router.get("/consolidate/{request_id}", summary="Fetch a consolidation result")
 def get_consolidation(request_id: str, ctx: AuthContext = Depends(api_key_auth),
                       db: Session = Depends(get_db)):
-    from app.b2b.router import get_analysis
-    return get_analysis(request_id, ctx, db)
+    require_any_scope(ctx, [SCOPE_READ, SCOPE_CLASSIFY])
+    req = db.query(AnalysisRequest).filter(
+        AnalysisRequest.request_id == request_id,
+        AnalysisRequest.client_id == ctx.client.id).first()
+    if req is None:
+        raise ApiError(errors.REQUEST_NOT_FOUND,
+                       "No request with that id exists for this client.")
+    payload = stored_result(req)
+    if req.status == RequestStatus.COMPLETED and payload is None:
+        return _expired_response(req)
+    return _envelope(req, payload)

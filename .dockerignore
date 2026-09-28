@@ -65,6 +65,7 @@ KredoAgent.spec
 tests/
 fixtures/
 scripts/
+!scripts/db_migrate.py
 docs/
 
 # ---- ML training-time material. The runtime loads exactly one artefact,

@@ -103,7 +103,8 @@ def extract_file(path: str, file_name: str, password: Optional[str] = None) -> S
 def consolidate(files: Sequence[Tuple[str, str]],
                 passwords: Optional[Dict[str, str]] = None,
                 default_password: Optional[str] = None,
-                account_numbers: Optional[Dict[str, str]] = None) -> dict:
+                account_numbers: Optional[Dict[str, str]] = None,
+                ruleset=None) -> dict:
     """`files` = [(path on disk, original file name)]. Returns the response `data`."""
     started = time.monotonic()
     passwords = passwords or {}
@@ -145,12 +146,12 @@ def consolidate(files: Sequence[Tuple[str, str]],
         file_results.append({"file_name": name, "status": "processed", "account_no": acct})
 
     return consolidate_statements(statements, file_results=file_results, flags=flags,
-                                  files_received=len(files), started=started)
+                                  files_received=len(files), started=started, ruleset=ruleset)
 
 
 def consolidate_statements(statements: List[SourceStatement], *, file_results: Optional[List[dict]] = None,
                            flags: Optional[List[dict]] = None, files_received: Optional[int] = None,
-                           started: Optional[float] = None) -> dict:
+                           started: Optional[float] = None, ruleset=None) -> dict:
     """The reconciliation half, on already-extracted statements (also used by tests)."""
     started = started if started is not None else time.monotonic()
     file_results = file_results if file_results is not None else [
@@ -216,8 +217,18 @@ def consolidate_statements(statements: List[SourceStatement], *, file_results: O
         c1, c2 = categorize(t.row.narration, t.row.direction or DEBIT, t.row.amount_paise)
         t.category_1, t.category_2 = c1, c2 or NO
     _salary_by_employer(all_txns)
+    rules_report = _apply_caller_rules(all_txns, ruleset) if ruleset is not None else None
     holders = {a["account_no"]: a["account_holder"] for a in account_summaries}
+    # Internal-transfer tagging runs LAST, after caller rules: the requirement
+    # fixes that category ("Internal Transfer" + the other account number), and
+    # a generic caller rule such as 'UPI -> Transfers' must not undo it.
     transfers = pair_internal_transfers(all_txns, holders)
+    for t in all_txns:
+        if t.category_1 == "Internal Transfer" and t.classification is not None:
+            t.classification = {"method": "internal_transfer",
+                                "explanation": "Matched to the opposite entry in account "
+                                               f"{t.category_2}; takes precedence over caller rules.",
+                                "overridden_rule_id": t.classification.get("rule_id")}
 
     all_txns.sort(key=lambda t: (t.account_no, 0))   # stable: keeps per-account order
     out_rows = [_row(t, by_index) for t in all_txns]
@@ -243,6 +254,66 @@ def consolidate_statements(statements: List[SourceStatement], *, file_results: O
         "flags": flags,
         "duplicates_removed": duplicates,
         "internal_transfers": transfers,
+        **({"rules": rules_report} if rules_report is not None else {}),
+    }
+
+
+class _RuleSubject:
+    """The attributes app/b2b/rules.py reads off a transaction."""
+
+    def __init__(self, t: Txn):
+        self.narration_raw = t.row.narration
+        self.narration_clean = t.row.narration
+        self.amount_paise = t.row.amount_paise
+        self.direction = "credit" if t.row.direction == CREDIT else "debit"
+        self.txn_date = t.row.date
+
+
+def _apply_caller_rules(txns: List[Txn], ruleset) -> dict:
+    """Caller-supplied rules (same format as POST /v1/classify) set Category 1.
+
+    A matching rule's `category` becomes Category 1; its `set.counterparty`, if
+    any, becomes Category 2 (otherwise our detail stays). Rows no rule matched
+    keep the built-in category, or take the ruleset's `default_category` when
+    one is given. Every row records how it was decided.
+    """
+    from collections import Counter
+    from app.b2b.rules import classify_one
+
+    used: Counter = Counter()
+    ambiguous = 0
+    matched = 0
+    unmatched_samples: List[str] = []
+    for t in txns:
+        d = classify_one(ruleset, _RuleSubject(t))
+        if d.method == "rule":
+            matched += 1
+            used[d.rule_id] += 1
+            ambiguous += int(d.ambiguous)
+            t.category_1 = d.category
+            cp = (d.assign or {}).get("counterparty")
+            if cp:
+                t.category_2 = cp
+            t.classification = d.to_api()
+        elif ruleset.default_category:
+            t.category_1 = ruleset.default_category
+            t.classification = {"method": "default", "category": ruleset.default_category,
+                                "explanation": "No caller rule matched; default_category applied."}
+        else:
+            t.classification = {"method": "builtin", "category": t.category_1,
+                                "explanation": "No caller rule matched; built-in category kept."}
+            if len(unmatched_samples) < 25 and t.row.narration not in unmatched_samples:
+                unmatched_samples.append(t.row.narration)
+    return {
+        "rule_count": len(ruleset.rules),
+        "version": getattr(ruleset, "version", None),
+        "transactions_matched": matched,
+        "transactions_unmatched": len(txns) - matched,
+        "ambiguous_count": ambiguous,
+        "rule_usage": [{"rule_id": r.rule_id, "category": r.category, "matched": used.get(r.rule_id, 0)}
+                       for r in ruleset.rules],
+        "rules_that_never_matched": [r.rule_id for r in ruleset.rules if not used.get(r.rule_id)],
+        "unmatched_samples": unmatched_samples,
     }
 
 
@@ -316,4 +387,5 @@ def _row(t: Txn, by_index: Dict[int, SourceStatement]) -> dict:
         "balance": fmt(r.balance_paise),
         "source_files": sorted({by_index[s].file_name for s, _ in t.sources}),
         "flags": t.flags,
+        **({"classification": t.classification} if t.classification is not None else {}),
     }

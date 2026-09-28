@@ -303,3 +303,67 @@ def test_analyze_uses_the_reconciled_extractor_for_real_pdfs():
     out = legacy.parse(p)
     assert len(out.transactions) == 238                 # the old pipeline read 5
     assert out.continuity_passed is True and out.statement_meta["account_number"] == "165502000000323"
+
+
+# ------------------------------------------- caller-supplied rules (+ statements)
+
+def _ruleset(obj):
+    import json as _json
+    from app.b2b.rules import load_ruleset
+    return load_ruleset(_json.dumps(obj))
+
+
+def test_caller_rules_set_category_1_and_report_usage():
+    rs = _ruleset({"version": "cl-1", "rules": [
+        {"id": "fuel", "category": "Fuel", "priority": 100, "match": {"any_of": ["IOCL"], "direction": "debit"},
+         "set": {"counterparty": "Indian Oil"}},
+        {"id": "never", "category": "X", "match": {"any_of": ["ZZZNOTHERE"]}}]})
+    rows = [row(1, "POS IOCL PETROL PUMP", 2000, DEBIT, 8000), row(2, "UPI/111/DR/SWIGGY", 300, DEBIT, 7700)]
+    r = consolidate_statements([stmt("s.pdf", "111", rows, 0)], ruleset=rs)
+    t0, t1 = r["transactions"]
+    assert (t0["category_1"], t0["category_2"]) == ("Fuel", "Indian Oil")
+    assert t0["classification"]["method"] == "rule" and t0["classification"]["rule_id"] == "fuel"
+    assert t1["category_1"] == "Food Expenses" and t1["classification"]["method"] == "builtin"
+    assert r["rules"]["rules_that_never_matched"] == ["never"]
+    assert r["rules"]["transactions_matched"] == 1
+
+
+def test_internal_transfer_beats_a_caller_rule():
+    rs = _ruleset({"rules": [{"id": "neft", "category": "Bank Transfer", "match": {"any_of": ["NEFT"]}}]})
+    a = [row(10, "NEFT/N123456789/TO SBI A/C XX5678", 10000, DEBIT, 40000)]
+    b = [row(10, "NEFT/N123456789/FROM HDFC XX1234", 10000, CREDIT, 25000)]
+    r = consolidate_statements([stmt("a.pdf", "50100001234", a, 0), stmt("b.pdf", "30000005678", b, 1)], ruleset=rs)
+    for t in r["transactions"]:
+        assert t["category_1"] == "Internal Transfer"
+        assert t["classification"]["method"] == "internal_transfer"
+        assert t["classification"]["overridden_rule_id"] == "neft"
+
+
+def test_endpoint_rejects_bad_rules_before_reading_files(api):
+    tc, h = api
+    f = [("files", ("a.csv", open(os.path.join(SAMPLES, "sample_statement.csv"), "rb")))]
+    r = tc.post("/v1/statements/consolidate", headers=h, files=f,
+                data={"rules": '{"rules":[{"category":"A","match":{"any_off":["X"]}}]}'})
+    assert r.status_code == 400 and r.json()["error"]["code"] == "INVALID_RULES"
+
+
+def test_classify_only_key_can_consolidate():
+    import uuid
+    from fastapi.testclient import TestClient
+    from app.b2b import auth as b2b_auth
+    from main import app
+    from tests.conftest import TestingSessionLocal
+    db = TestingSessionLocal()
+    c = b2b_auth.create_client(db, name="CL", slug=f"clc-{uuid.uuid4().hex[:8]}")
+    c.rate_limit_per_minute = 1000
+    db.commit()
+    issued = b2b_auth.issue_key(db, c, name="t", scopes="classify:write")
+    secret = issued.secret if hasattr(issued, "secret") else issued[1]
+    db.close()
+    with TestClient(app) as tc:
+        f = [("files", ("a.csv", open(os.path.join(SAMPLES, "sample_statement.csv"), "rb")))]
+        r = tc.post("/v1/statements/consolidate", headers={"Authorization": f"Bearer {secret}"}, files=f)
+        assert r.status_code == 200, r.text
+        g = tc.get(f"/v1/statements/consolidate/{r.json()['request_id']}",
+                   headers={"Authorization": f"Bearer {secret}"})
+        assert g.status_code == 200

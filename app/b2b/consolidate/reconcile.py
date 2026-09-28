@@ -57,6 +57,7 @@ class Txn:
     category_2: Optional[str] = None
     flags: List[dict] = field(default_factory=list)
     transfer_peer: Optional[str] = None
+    classification: Optional[dict] = None     # set only when caller rules were supplied
 
 
 def norm_narr(text: str) -> str:

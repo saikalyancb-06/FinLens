@@ -17,11 +17,22 @@ services:
     dockerContext: .
     # Free instances sleep after inactivity and are wiped; a disk cannot be
     # attached to one. This service holds uploaded bank statements, so it needs
-    # a paid instance. `starter` is the smallest that supports a disk — raise it
-    # if PDF parsing of large statements gets memory-tight.
-    plan: starter
+    # a paid instance.
+    #
+    # `standard` (1 CPU / 2 GB, plan id `1c-2g`), not `starter` (512 MB).
+    # Measured on the Credit Lens sample set in this image: ~200 MB idle, ~275
+    # MB with two large jobs running at once through the balance-verified PDF
+    # extractor. But a PDF that extractor cannot reconcile falls back to the
+    # older parsing pipeline, which peaked at ~900 MB on a 57-page statement —
+    # on 512 MB that request would be OOM-killed and take every other in-flight
+    # request with it. B2B_MAX_CONCURRENT_JOBS below caps concurrent jobs.
+    plan: standard
     region: singapore
     healthCheckPath: /health
+    # Runs after the image is built and before the new version takes traffic.
+    # Empty database -> tables + `alembic stamp head`; otherwise `upgrade head`.
+    # A failure aborts the deploy and the previous version keeps serving.
+    preDeployCommand: python scripts/db_migrate.py
 
     # Uploaded statements and email attachments are written to UPLOAD_DIR and
     # read back later — the PDF-password retry path and the re-parse scripts
@@ -87,6 +98,11 @@ services:
       # lifespan task. Leave on unless the deployment has no egress.
       - key: FX_REFRESH_ENABLED
         value: "true"
+      # How many statement analyses (analyze / classify / consolidate) may run
+      # at once; the rest wait up to B2B_JOB_WAIT_SECONDS, then get 503 with
+      # Retry-After. 2 fits comfortably in 2 GB.
+      - key: B2B_MAX_CONCURRENT_JOBS
+        value: "2"
 
       # ---- Set these in the Render dashboard -------------------------------
       # `generateValue: true` has Render mint a strong random secret on first

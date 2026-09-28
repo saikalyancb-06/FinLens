@@ -638,15 +638,24 @@ async def classify_endpoint(
     ingested = None
 
     try:
-        ingested = ingest.save_upload(file, max_bytes=max_bytes, tmp_dir=tmp_dir)
+        ingested = await run_in_threadpool(ingest.save_upload, file, max_bytes=max_bytes,
+                                           tmp_dir=tmp_dir)
         ingested.detected = detect_format(ingested.filename, ingested.head_bytes,
                                           ingested.path)
         try:
-            result = run_classification(
-                ingested, ruleset, request_id=rid,
-                password=pdf_password or None, currency=currency_v,
-                include_transactions=want_txns,
-                include_unmatched_samples=want_samples)
+            # Parsing (a PDF especially) is CPU-bound: run it in the thread pool
+            # under the process-wide job cap, never on the event loop.
+            from app.b2b.jobs import heavy_slot
+
+            def _classify():
+                with heavy_slot():
+                    return run_classification(
+                        ingested, ruleset, request_id=rid,
+                        password=pdf_password or None, currency=currency_v,
+                        include_transactions=want_txns,
+                        include_unmatched_samples=want_samples)
+
+            result = await run_in_threadpool(_classify)
         except ApiError as exc:
             metering.record_usage(
                 db, ctx, endpoint="/v1/classify", method="POST",

@@ -71,6 +71,8 @@ mlmodel/config.json
 
 # ─── PDF / documents uploaded during dev ─────────────────────────────────────
 *.pdf
+# Synthetic test statements used by tests/test_statement_closing_balance.py.
+!fixtures/*.pdf
 
 # ─── Compiled / packaged executables ─────────────────────────────────────────
 dist/

@@ -359,11 +359,13 @@ statement of a case in one request (several `files` fields, or one ZIP); get
 back one record per unique transaction across all accounts, with duplicates
 removed and balance breaks flagged.
 
-`multipart/form-data`, scope `analyze:write`:
+`multipart/form-data`, scope `analyze:write` **or** `classify:write`:
 
 | Field | Notes |
 |---|---|
 | `files` | Repeat once per file. PDF, XLSX/XLS, CSV/TSV, JSON, OFX, CAMT.053 — or a `.zip` of them (folders inside are fine; non-statement files are reported, not fatal). Up to 25 uploads / 150 MB. |
+| `rules` | Optional ruleset JSON — **the same format as `POST /v1/classify`** (`GET /v1/classify/schema`). A matching rule's `category` becomes Category 1 and its `set.counterparty` Category 2; each row gets a `classification` block (`rule` / `builtin` / `default` / `internal_transfer`) and `data.rules` reports usage, never-matched rules and unmatched samples. Internal transfers keep their tag even when a rule matched. |
+| `account_numbers` | Optional JSON `{"file name": "account no"}` for files that do not print one (CSV/JSON exports). |
 | `passwords` | Optional JSON `{"file name": "password"}` for locked PDFs. |
 | `pdf_password` | Optional password tried on every locked PDF. |
 | `async_mode` | `true` → `202`, then `GET /v1/statements/consolidate/{request_id}`. Large batches (50+ pages) take 15–40 s synchronously. |
