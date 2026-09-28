@@ -533,6 +533,32 @@ def require_scopes(ctx: AuthContext, scopes: Sequence[str]) -> None:
         require_scope(ctx, scope)
 
 
+def require_any_scope(ctx: AuthContext, scopes: Sequence[str]) -> None:
+    """Raise INSUFFICIENT_SCOPE unless ``ctx`` carries at least ONE of ``scopes``.
+
+    `require_scopes` is an AND; this is the OR, and /v1/classify needs it for a
+    specific reason. Classification is a narrower capability than full financial
+    analysis, so it has its own scope and an operator can mint a key that may
+    classify and nothing else. But every key already issued carries
+    ``analyze:write``, which is strictly the more powerful grant — refusing
+    those would break existing integrations to enforce a distinction that only
+    matters for keys created afterwards.
+
+    So the endpoint accepts either, and the error names all of the scopes that
+    would have worked rather than only the first one tried.
+    """
+    if any(ctx.has_scope(scope) for scope in scopes):
+        return
+    wanted = list(scopes)
+    raise ApiError(
+        err.INSUFFICIENT_SCOPE,
+        "This API key is not permitted to "
+        + " or ".join(f"'{s}'" for s in wanted)
+        + ".",
+        detail={"required_any_of": wanted, "granted_scopes": list(ctx.scopes)},
+    )
+
+
 # --------------------------------------------------------------------------- #
 # FastAPI wiring
 # --------------------------------------------------------------------------- #
@@ -578,5 +604,5 @@ __all__ = [
     "KEY_PREFIX_LENGTH", "SECRET_LENGTH",
     "generate_api_key", "hash_secret", "create_client", "issue_key",
     "revoke_key", "rotate_key", "verify_api_key", "require_scope",
-    "require_scopes", "api_key_auth",
+    "require_scopes", "require_any_scope", "api_key_auth",
 ]

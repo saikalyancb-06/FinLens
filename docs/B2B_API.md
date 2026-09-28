@@ -8,6 +8,12 @@ A client sends a bank statement file and receives structured financial analysis.
 They never implement PDF, Excel or CSV parsing, and never implement the
 financial calculations.
 
+> **Looking for classification only?** If you want to send your *own* rules and
+> get the statement's rows back labelled with *your* categories — without the
+> income/expense/debt/risk analysis — that is a different endpoint:
+> `POST /v1/classify`, documented in [CLASSIFY_API.md](CLASSIFY_API.md). It
+> shares this API's authentication, parsers and error envelope.
+
 ---
 
 ## 1. Authentication
