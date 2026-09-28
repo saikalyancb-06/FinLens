@@ -17,6 +17,22 @@ An enterprise-grade, multi-tenant Treasury Management System (TMS) and Automated
 
 ---
 
+## 🔌 Statement API (for other products, e.g. Credit Lens)
+
+Bank statements in, one classified JSON record per transaction out: duplicates
+removed, internal transfers tagged, running balances reconciled.
+
+| Doc | For |
+|---|---|
+| [docs/API_QUICKSTART.md](docs/API_QUICKSTART.md) | callers: the curl command and the response shape |
+| [docs/B2B_API.md](docs/B2B_API.md) | full API reference (`/v1/statements/consolidate` is §10) |
+| [docs/CLASSIFY_API.md](docs/CLASSIFY_API.md) | classifying with the caller's own rules |
+| [docs/RENDER_FREE_TEST.md](docs/RENDER_FREE_TEST.md) | free test deploy on Render |
+| [docs/B2B_DEPLOY_CHECKLIST.md](docs/B2B_DEPLOY_CHECKLIST.md) | production deploy (`render.yaml`) and onboarding a client |
+| [postman/](postman/) | Postman collection |
+
+---
+
 ## 📐 System Architecture Diagrams
 
 ### 1. High-Level System Architecture

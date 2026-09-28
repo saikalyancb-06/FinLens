@@ -113,3 +113,34 @@ recon_failures.txt
 
 # ─── HTML verification reports (generated artefacts) ─────────────────────────
 mlmodel/verification_*.html
+
+# ─── Local deploy / API test leftovers ──────────────────────────────────────
+*.bundle
+DEPLOY_NOW.md
+result*.json
+Creditlens*/
+Creditlens*.zip
+
+# ─── More tool caches ─────────────────────────────────────────────────────────
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+node_modules/
+
+# ─── One-off debug / repair scripts (kept locally, not part of the product) ──
+fix_schema.py
+scripts/debug_*.py
+scripts/print_raw_broken.py
+scripts/scan_debug.py
+scripts/check_preview.py
+scripts/inspect_exceptions_run.py
+scripts/delete_connected.py
+scripts/delete_stale_run.py
+scripts/run_api_broken.py
+scripts/run_api_exceptions.py
+scripts/run_both_correct_fixtures.py
+scripts/run_unforced_fixtures.py
+scripts/test_confirm.py
+scripts/audit_march_2023.py
+scripts/audit_opening_bal.py
