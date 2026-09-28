@@ -1,0 +1,86 @@
+# Dev Containers / Codespaces stack: editor container + PostgreSQL + Redis.
+#
+# Separate from the docker-compose.yml at the repository root, which describes a
+# deployment: that file sets ENVIRONMENT=production and refuses to start without
+# POSTGRES_PASSWORD and JWT_SECRET_KEY supplied from outside (the `:?` form). A
+# codespace has neither, and requiring them would mean the container fails
+# before an editor ever attaches. This file therefore stands alone rather than
+# extending it — the two must not drift into each other.
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    # The dev container must outlive the build; VS Code attaches and runs the
+    # server itself from a terminal.
+    command: sleep infinity
+    init: true
+    volumes:
+      # The checkout is bind-mounted, so edits in the editor are the files the
+      # interpreter imports. Path matches "workspaceFolder" in devcontainer.json.
+      - ..:/workspace:cached
+    environment:
+      # Development, explicitly. This is what keeps DB_AUTO_CREATE on (so a
+      # fresh database can be bootstrapped by importing the app), lets
+      # app/services/cache.py fall back to an in-process cache if Redis is
+      # missing, and leaves /docs reachable. Never set this to production here:
+      # app/config.py::validate_security() would then reject the throwaway
+      # credentials below, which is exactly what it is for.
+      ENVIRONMENT: development
+      # Reached over the compose network by service name. These credentials are
+      # local to this stack and no port is published to the host, so nothing
+      # outside the codespace can connect with them.
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/backend_db
+      REDIS_URL: redis://redis:6379/0
+      UPLOAD_DIR: uploads
+      LOG_DIR: logs
+      PYTHONPATH: /workspace
+      # The FX refresher makes outbound calls to RBI and a market data API on a
+      # timer. Off by default in a development container: it is noise in the log
+      # of a codespace that is usually running for one endpoint, and conversion
+      # falls back to whatever rates are already stored. Set true when working
+      # on app/services/fx*.
+      FX_REFRESH_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: backend_db
+    # No `ports:` on purpose. `app` reaches this as postgres:5432 over the
+    # compose network; publishing it would only widen what the codespace exposes.
+    # From a dev-container terminal:
+    #     psql "$DATABASE_URL"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # -d names the application database: without it pg_isready reports ready
+      # during first-boot initialisation, before backend_db exists, and
+      # post-create.sh would race the schema bootstrap against it.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d backend_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Optional for the application (cache.py degrades to an in-process cache),
+    # so `condition: service_started` above rather than a healthcheck gate.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  # Named, so the database survives a "Rebuild Container".
+  postgres_data:

@@ -348,6 +348,49 @@ statement was found when it was not:
 
 ---
 
+## 💻 GitHub Codespaces / Dev Containers
+
+`.devcontainer/` holds everything needed to open this repository in a codespace:
+**Code → Codespaces → Create codespace**. The container brings up PostgreSQL 15
+and Redis 7 alongside the editor, installs the Python dependencies at image
+build time, generates a `.env` with a secret unique to that codespace, and
+bootstraps the schema — so the first thing left to do is start the server:
+
+```bash
+python main.py
+```
+
+Port 8000 is forwarded automatically; open it from the **Ports** panel and check
+`/health`. Interactive API docs are at `/docs` (enabled because the container
+runs `ENVIRONMENT=development`).
+
+| File | What it does |
+| :--- | :--- |
+| `devcontainer.json` | Editor configuration: which compose service to attach to, forwarded ports, extensions, the interpreter at `/opt/venv/bin/python`. |
+| `Dockerfile` | Development image. Adds poppler + tesseract (OCR for scanned statements) and `libpq`, then installs `requirements.txt` into `/opt/venv` at build time so Codespaces **prebuilds** cache it. |
+| `docker-compose.yml` | The `app`, `postgres` and `redis` containers, plus the `DATABASE_URL` / `REDIS_URL` wiring between them. Neither database publishes a port — they are reached by service name over the compose network. |
+| `post-create.sh` | Runs once: writes `.env`, waits for PostgreSQL, then creates and stamps the schema (new database) or runs `alembic upgrade head` (existing one). Re-runnable by hand. |
+
+Notes:
+
+- This stack is **separate from the `docker-compose.yml` at the repository
+  root**, which describes a deployment: it sets `ENVIRONMENT=production` and
+  refuses to start without `POSTGRES_PASSWORD` and `JWT_SECRET_KEY` supplied
+  from outside. A codespace has neither, so the two are kept apart deliberately
+  rather than one extending the other.
+- The database lives in a named volume, so **Rebuild Container** keeps your data.
+  To start over: `docker compose -f .devcontainer/docker-compose.yml down -v`.
+- OAuth mailbox connectors need the *forwarded* HTTPS URL as their redirect URI,
+  not `localhost`. `post-create.sh` writes the right value into `.env`
+  (`https://<codespace>-8000.app.github.dev/email/oauth/callback`); register that
+  same string with Google/Microsoft — it must match byte for byte.
+- Playwright's browsers are not downloaded. Run `playwright install chromium`
+  inside the container if you are working on the RPA agent in `agent/`.
+- The FX refresher (`FX_REFRESH_ENABLED`) is off in the container so it makes no
+  outbound calls to RBI on a timer; turn it on when working on that code.
+
+---
+
 ## ⚡ Setup & Installation
 
 ### Prerequisites

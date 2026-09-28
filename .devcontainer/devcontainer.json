@@ -1,0 +1,46 @@
+{
+  "name": "FinLens treasury backend",
+
+  // Three containers, not one: the API needs a real PostgreSQL (app/config.py
+  // rejects anything that is not a postgresql:// URL — there is no SQLite
+  // fallback) and optionally a Redis. See docker-compose.yml beside this file.
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+
+  // Mounted at a fixed path rather than /workspaces/${localWorkspaceFolderBasename},
+  // so the compose volume and this path cannot disagree when the checkout
+  // directory is named differently from the repository.
+  "workspaceFolder": "/workspace",
+
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "FinLens API",
+      "onAutoForward": "notify"
+    }
+  },
+
+  // Dependencies are baked into the image; this only does the things that need
+  // the database running and a generated secret: .env, schema bootstrap.
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  // The image runs as vscode (uid 1000); /opt/venv is owned by that user so
+  // `pip install` works without sudo.
+  "remoteUser": "vscode",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["tests"]
+      }
+    }
+  }
+}
