@@ -144,3 +144,5 @@ scripts/run_unforced_fixtures.py
 scripts/test_confirm.py
 scripts/audit_march_2023.py
 scripts/audit_opening_bal.py
+
+fullfolder.zip

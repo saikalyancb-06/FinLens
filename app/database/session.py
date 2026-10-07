@@ -134,13 +134,32 @@ def wait_for_database(eng=None) -> None:
                 )
                 time.sleep(delay)
 
+    reason = str(last_error).lower()
+    if "password authentication failed" in reason:
+        hint = ("The username/password in DATABASE_URL is wrong for this PostgreSQL server. "
+                "Put the right one in .env (copy .env.example), e.g. "
+                "DATABASE_URL=postgresql://postgres:<your password>@localhost:5432/backend_db")
+    elif "does not exist" in reason and "database" in reason:
+        hint = ("The database in DATABASE_URL does not exist and could not be created "
+                "automatically. Create it (createdb backend_db) or set DB_AUTO_CREATE=true.")
+    elif "connection refused" in reason or "could not translate host" in reason or "timeout" in reason:
+        hint = ("PostgreSQL is not running at that host/port. Start it "
+                "(docker compose up -d postgres, or the PostgreSQL service on Windows) "
+                "and check the host and port in DATABASE_URL.")
+    else:
+        hint = "Check the server is running and DATABASE_URL in .env is correct."
     raise RuntimeError(
         f"Could not connect to PostgreSQL at '{_safe_url(SQLALCHEMY_DATABASE_URL)}' after "
-        f"{attempts} attempt(s): {last_error}. PostgreSQL is required — there is no SQLite "
-        "fallback. Check the server is running and DATABASE_URL is correct "
-        "(docker compose up -d postgres)."
+        f"{attempts} attempt(s): {last_error}\n\n{hint}\n(PostgreSQL is required — there is "
+        "no SQLite fallback.)"
     ) from last_error
 
+
+if settings.DB_AUTO_CREATE:
+    # A fresh clone points at a database nobody has created yet. Create it
+    # (local development only — production runs with DB_AUTO_CREATE off).
+    from app.database.bootstrap import ensure_database_exists
+    ensure_database_exists(SQLALCHEMY_DATABASE_URL)
 
 wait_for_database()
 
@@ -181,6 +200,10 @@ if settings.DB_AUTO_CREATE:
     # Alembic (`alembic upgrade head`); set DB_AUTO_CREATE=false there so a
     # stale model definition can never quietly create a table.
     Base.metadata.create_all(bind=engine)
+    # create_all never adds a column to a table that already exists, so a
+    # database built by an older checkout would fail on the newest columns.
+    from app.database.bootstrap import add_missing_columns
+    add_missing_columns(engine, Base.metadata)
 
 
 def get_db():

@@ -401,41 +401,34 @@ pool and test-database settings. A `DATABASE_URL` that is not a PostgreSQL URL
 is rejected at startup, and an unreachable server is a hard failure rather than
 a silent fallback to a local file.
 
-### 3. Database Migration & Startup
+### 3. Database & Startup
 
-The migration chain does **not** build a database from nothing. Revision `001`
-expects the tables to already exist (it alters `statements`), so
-`alembic upgrade head` against an empty database fails — either with
-`NoSuchTableError: statements`, or, because `DB_AUTO_CREATE` defaults to true
-outside production, with `DuplicateColumn: column "classification" of relation
-"email_attachments" already exists` once the import side effect has built the
-schema underneath it.
-
-The schema is owned by `Base.metadata.create_all` on first run and by Alembic
-from then on. So a **new** database is bootstrapped and then stamped:
+Start PostgreSQL (skip if one is already running), put its URL in `.env`, and
+start the app — that is all:
 
 ```bash
-# Start PostgreSQL (skip if you already run one)
-docker compose up -d postgres
-
-# First run only — build the schema, then tell Alembic it is current.
-# DB_AUTO_CREATE defaults to true outside production, so importing the app
-# creates every table; stamping records that as revision head without
-# re-running the migrations that assume those tables already exist.
-python -c "import main"
-python -m alembic stamp head
-
-# Start FastAPI application server
+docker compose up -d postgres        # or your local PostgreSQL service
 python main.py
 ```
 
-On an **existing** database, upgrading is the normal `python -m alembic
-upgrade head` — after the stamp above it is a clean no-op, and every later
-revision applies as usual.
+On start-up (`DB_AUTO_CREATE`, on by default outside production) the app
+brings the database to the current schema whatever state it is in
+(`app/database/bootstrap.py`):
 
-In production (`ENVIRONMENT=production`) `DB_AUTO_CREATE` is off and Alembic
-owns the schema outright; bootstrap a fresh production database by running the
-stamp step once with `DB_AUTO_CREATE=true` explicitly set.
+* the database named in `DATABASE_URL` does not exist → it is created;
+* empty database → every table is built and recorded in `alembic_version`;
+* a database built by an older checkout → missing tables and columns are
+  added (additive only, nothing dropped) and migrations are applied;
+* afterwards `python -m alembic upgrade head` is always a clean no-op.
+
+If it still cannot connect, the error says which of these it is: wrong
+password in `DATABASE_URL`, PostgreSQL not running, or the database could not
+be created.
+
+In production (`ENVIRONMENT=production`) `DB_AUTO_CREATE` is off and
+`python scripts/db_migrate.py` (Render's pre-deploy step) owns the schema: it
+builds an empty database, upgrades a versioned one, and adopts one that was
+built without Alembic.
 
 App will be accessible at: `http://localhost:8000`
 

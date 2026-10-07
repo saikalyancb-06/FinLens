@@ -8,9 +8,8 @@ remember the manual bootstrap from docs/B2B_DEPLOY_CHECKLIST.md:
     nothing (revision 001 alters a table it assumes exists), which is why the
     runbook used to have a manual step for this.
   * database under Alembic control     -> `alembic upgrade head`.
-  * tables but no alembic_version      -> stop with an explanation. That is a
-    database somebody built by hand or with DB_AUTO_CREATE; guessing which
-    revision it matches could skip or double-apply a migration.
+  * tables but no alembic_version      -> a database built by DB_AUTO_CREATE:
+    add whatever tables/columns are missing (additive only), then stamp head.
 
 Exit code is non-zero on any failure, which makes Render abort the deploy and
 keep the previous version serving — the correct outcome for a schema problem.
@@ -51,10 +50,16 @@ def main() -> int:
         print("[migrate] upgrading to head")
         command.upgrade(cfg, "head")
     else:
-        print("[migrate] REFUSING: the database has tables but no alembic_version. "
-              "Identify its revision and run `alembic stamp <rev>` once, by hand, "
-              "then redeploy.", file=sys.stderr)
-        return 2
+        # Built by DB_AUTO_CREATE (create_all) and never versioned. It matches
+        # the models of whichever checkout built it, so: create missing tables,
+        # add missing columns (additive only), then record head.
+        print("[migrate] tables but no alembic_version: adopting it — adding missing "
+              "tables/columns from the models, then stamping head")
+        from app.database.bootstrap import add_missing_columns
+        Base.metadata.create_all(bind=engine)
+        for change in add_missing_columns(engine, Base.metadata):
+            print(f"[migrate]   {change}")
+        command.stamp(cfg, "head")
 
     with engine.connect() as conn:
         from sqlalchemy import text

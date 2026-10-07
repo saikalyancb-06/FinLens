@@ -63,7 +63,12 @@ import app.b2b.models  # noqa: F401 — registers the API tables on Base.metadat
 # ahead of the migrations would then quietly create the table it expected, and
 # the next `alembic upgrade` would collide with it.
 if settings.DB_AUTO_CREATE:
-    Base.metadata.create_all(bind=engine)
+    # Local development: build / repair the schema and record it in
+    # alembic_version, so a fresh clone starts on any database state and a
+    # later `alembic upgrade head` is a no-op (app/database/bootstrap.py).
+    from app.database.bootstrap import prepare_schema
+    from app.database.session import SQLALCHEMY_DATABASE_URL
+    print(f"[Database] {prepare_schema(engine, Base.metadata, SQLALCHEMY_DATABASE_URL)}")
 
 # Ensure uploads/email directory exists
 os.makedirs(os.path.join(settings.UPLOAD_DIR, "email"), exist_ok=True)
