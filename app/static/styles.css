@@ -2514,3 +2514,8 @@ body.app-inner .page-tab.active { color: var(--primary-color); font-weight: 700;
 body.app-inner .ops-label { font-size: 0.45rem; white-space: normal; overflow: visible; }
 
 body.app-inner .ops-sub { font-size: 0.42rem; }
+
+/* Reconciliation inputs: one row; stack only on a narrow screen. */
+@media (max-width: 900px) {
+    .recon-form-row { grid-template-columns: 1fr 1fr !important; }
+}

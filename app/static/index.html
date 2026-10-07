@@ -12,7 +12,7 @@
          plain StaticFiles mount, so without a version marker the browser keeps
          serving the previous stylesheet and the new layout renders unstyled.
          Bump this value whenever styles.css changes. -->
-    <link rel="stylesheet" href="/static/styles.css?v=20260910b">
+    <link rel="stylesheet" href="/static/styles.css?v=20261007b">
     
     <!-- Utilities & Libraries (Served locally) -->
     <!-- format.js carries the same cache trap as styles.css: it is served by a
@@ -6260,16 +6260,18 @@
                                 <span style={{ fontSize: '0.48rem', color: 'var(--gray-600)' }}>Upload your Tally/ERP books ledger to compare against the bank statement</span>
                             </div>
                             <div className="card-body">
-                                {/* Account + Period + Convention row */}
-                                <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.5rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                                {/* Account, period, ledger format and book opening on ONE row:
+                                    a five-column grid that shrinks its fields rather than
+                                    wrapping (it only wraps on a narrow screen). */}
+                                <div className="recon-form-row" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1.2fr)', gap: '1rem', marginBottom: '1.25rem', alignItems: 'start' }}>
                                     <div>
-                                        <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.48rem', marginBottom: '0.4rem' }}>
+                                        <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.48rem', marginBottom: '0.4rem', whiteSpace: 'nowrap' }}>
                                             BANK ACCOUNT <span style={{ color: '#dc2626' }}>*</span>
                                         </label>
                                         <select
                                             value={accountId}
                                             onChange={e => setAccountId(e.target.value)}
-                                            style={{ minWidth: '240px' }}
+                                            style={{ width: '100%' }}
                                             id="recon-account-select"
                                         >
                                             <option value="">-- Select Bank Account --</option>
@@ -6281,44 +6283,46 @@
                                         </select>
                                     </div>
                                     <div>
-                                        <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.48rem', marginBottom: '0.4rem' }}>
+                                        <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.48rem', marginBottom: '0.4rem', whiteSpace: 'nowrap' }}>
                                             PERIOD START <span style={{ color: '#dc2626' }}>*</span>
                                         </label>
-                                        <input type="date" value={periodFrom} onChange={e => setPeriodFrom(e.target.value)} />
+                                        <input type="date" value={periodFrom} onChange={e => setPeriodFrom(e.target.value)} style={{ width: '100%' }} />
                                     </div>
                                     <div>
-                                        <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.48rem', marginBottom: '0.4rem' }}>
+                                        <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.48rem', marginBottom: '0.4rem', whiteSpace: 'nowrap' }}>
                                             PERIOD END <span style={{ color: '#dc2626' }}>*</span>
                                         </label>
-                                        <input type="date" value={periodTo} onChange={e => setPeriodTo(e.target.value)} />
+                                        <input type="date" value={periodTo} onChange={e => setPeriodTo(e.target.value)} style={{ width: '100%' }} />
                                     </div>
                                     <div>
-                                        <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.48rem', marginBottom: '0.4rem' }}>LEDGER FORMAT</label>
+                                        <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.48rem', marginBottom: '0.4rem', whiteSpace: 'nowrap' }}>LEDGER FORMAT</label>
                                         <select
                                             value={ledgerConvention}
                                             onChange={e => setLedgerConvention(e.target.value)}
                                             id="recon-convention-select"
-                                            style={{ minWidth: '260px' }}
+                                            style={{ width: '100%' }}
+                                            title="STANDARD: Debit = money out, Credit = money in (most CSV/Excel exports). DEBIT_IN: Debit = money in, Credit = money out (Tally bank ledger)."
                                         >
-                                            <option value="STANDARD">STANDARD — Debit=Out, Credit=In (CSV/Excel)</option>
-                                            <option value="DEBIT_IN">DEBIT_IN — Debit=In, Credit=Out (Tally)</option>
+                                            <option value="STANDARD">Standard — Debit = Out</option>
+                                            <option value="DEBIT_IN">Tally — Debit = In</option>
                                         </select>
                                     </div>
                                     <div>
-                                        <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.48rem', marginBottom: '0.4rem' }}>BOOK OPENING BALANCE (₹)</label>
+                                        <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.48rem', marginBottom: '0.4rem', whiteSpace: 'nowrap' }}>BOOK OPENING (₹)</label>
                                         <input
                                             type="text"
                                             inputMode="decimal"
                                             value={bookOpening}
                                             onChange={e => setBookOpening(e.target.value)}
-                                            placeholder="e.g. 1,25,000.00 (minus for overdraft)"
+                                            placeholder="e.g. 1,25,000.00"
                                             id="recon-book-opening"
-                                            style={{ minWidth: '220px' }}
+                                            style={{ width: '100%' }}
+                                            title="Ledger balance on Period Start; minus for an overdraft. Only needed the first time, or if the file has no Opening Balance row."
                                         />
-                                        <div style={{ fontSize: '0.42rem', color: 'var(--gray-600)', marginTop: '0.25rem', maxWidth: '260px' }}>
-                                            Ledger balance on Period Start. Only needed the first time, or if the file has no Opening Balance row.
-                                        </div>
                                     </div>
+                                </div>
+                                <div style={{ fontSize: '0.42rem', color: 'var(--gray-600)', marginTop: '-0.85rem', marginBottom: '1.25rem' }}>
+                                    Book opening: the ledger balance on Period Start (minus for an overdraft). Only needed the first time, or if the file has no Opening Balance row.
                                 </div>
 
                                 {!isFormValid && (
@@ -6775,14 +6779,36 @@
         /* Shared page furniture. Every signed-in page builds its title, tiles
            and banners from these, so the same kind of thing looks the same on
            every tab (styles: "ONE LOOK FOR EVERY SIGNED-IN PAGE" in styles.css). */
+        /* Layout is inline as well as in styles.css: a browser holding an older
+           stylesheet must still get a header row, real tabs and compact tiles,
+           never bare default buttons. */
         function PageHeader({ title, subtitle, actions }) {
             return (
-                <div className="page-header">
-                    <div>
-                        <h2 className="page-title">{title}</h2>
-                        {subtitle && <p className="page-subtitle">{subtitle}</p>}
+                <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', margin: '0.65rem 0 1rem' }}>
+                    <div style={{ minWidth: 0 }}>
+                        <h2 className="page-title" style={{ fontSize: '0.9rem', fontWeight: 700, margin: '0 0 0.25rem' }}>{title}</h2>
+                        {subtitle && <p className="page-subtitle" style={{ fontSize: '0.54rem', color: 'var(--gray-600)', margin: 0 }}>{subtitle}</p>}
                     </div>
-                    {actions && <div className="page-actions">{actions}</div>}
+                    {actions && <div className="page-actions" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>{actions}</div>}
+                </div>
+            );
+        }
+
+        function PageTabs({ tabs, active, onChange }) {
+            return (
+                <div className="page-tabs" style={{ display: 'flex', flexWrap: 'wrap', borderBottom: '1px solid var(--gray-300)', marginBottom: '1.25rem' }}>
+                    {tabs.map(t => {
+                        const on = t.key === active;
+                        return (
+                            <button key={t.key} type="button" className={`page-tab ${on ? 'active' : ''}`}
+                                onClick={() => onChange(t.key)}
+                                style={{ padding: '0.6rem 1.1rem', border: 'none', borderBottom: `2px solid ${on ? 'var(--primary-color)' : 'transparent'}`,
+                                         background: 'none', cursor: 'pointer', fontSize: '0.57rem', fontFamily: 'inherit',
+                                         color: on ? 'var(--primary-color)' : 'var(--gray-600)', fontWeight: on ? 700 : 400, marginBottom: '-1px' }}>
+                                {t.label}
+                            </button>
+                        );
+                    })}
                 </div>
             );
         }
@@ -6791,12 +6817,12 @@
             const shown = (tiles || []).filter(Boolean);
             if (!shown.length) return null;
             return (
-                <div className="stats-grid">
+                <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '0.9rem' }}>
                     {shown.map(t => (
-                        <div key={t.label} className="stat-card" title={t.title || ''}>
-                            <div className="stat-label">{t.label}</div>
-                            <div className="stat-value" style={t.color ? { color: t.color } : (t.warn ? { color: '#b45309' } : undefined)}>{t.value}</div>
-                            {t.sub && <div className="stat-change">{t.sub}</div>}
+                        <div key={t.label} className="stat-card" title={t.title || ''} style={{ padding: '0.6rem 0.9rem', marginBottom: 0 }}>
+                            <div className="stat-label" style={{ fontSize: '0.45rem', marginBottom: '0.2rem' }}>{t.label}</div>
+                            <div className="stat-value" style={{ fontSize: '0.8rem', ...(t.color ? { color: t.color } : (t.warn ? { color: '#b45309' } : {})) }}>{t.value}</div>
+                            {t.sub && <div className="stat-change" style={{ fontSize: '0.42rem', marginTop: '0.15rem' }}>{t.sub}</div>}
                         </div>
                     ))}
                 </div>
@@ -7573,17 +7599,11 @@
                         subtitle="Human-in-the-loop review for transactions the classifier could not decide, ambiguous duplicates, and BRS match candidates."
                         actions={<button className="btn btn-sm" onClick={loadQueueData} disabled={loading}>Refresh Queue</button>} />
 
-                    <div className="page-tabs">
-                        <button className={`page-tab ${activeTab === 'categorization' ? 'active' : ''}`} onClick={() => setActiveTab('categorization')}>
-                            Manual Review ({catCount})
-                        </button>
-                        <button className={`page-tab ${activeTab === 'dedup' ? 'active' : ''}`} onClick={() => setActiveTab('dedup')}>
-                            Cross-Source Duplicates ({dedupMatches.length})
-                        </button>
-                        <button className={`page-tab ${activeTab === 'brs' ? 'active' : ''}`} onClick={() => setActiveTab('brs')}>
-                            BRS Match Candidates ({brsMatches.length})
-                        </button>
-                    </div>
+                    <PageTabs active={activeTab} onChange={setActiveTab} tabs={[
+                        { key: 'categorization', label: `Manual Review (${catCount})` },
+                        { key: 'dedup', label: `Cross-Source Duplicates (${dedupMatches.length})` },
+                        { key: 'brs', label: `BRS Match Candidates (${brsMatches.length})` },
+                    ]} />
 
                     {activeTab === 'categorization' ? (
                         <CategorizationReviewTab onCountChange={setCatCount} />
@@ -8184,16 +8204,10 @@
                     {exportError && <Banner kind="error" onClose={() => setExportError('')}>{exportError}</Banner>}
 
                     {/* Sub Navigation Tabs */}
-                    <div className="page-tabs">
-                        {[
-                            { key: 'treasury', label: 'Treasury Overview (Group Level)' },
-                            { key: 'csv', label: 'Export Transactions (CSV / Excel / PDF)' }
-                        ].map(t => (
-                            <button key={t.key} className={`page-tab ${activeTab === t.key ? 'active' : ''}`} onClick={() => setActiveTab(t.key)}>
-                                {t.label}
-                            </button>
-                        ))}
-                    </div>
+                    <PageTabs active={activeTab} onChange={setActiveTab} tabs={[
+                        { key: 'treasury', label: 'Treasury Overview (Group Level)' },
+                        { key: 'csv', label: 'Export Transactions (CSV / Excel / PDF)' },
+                    ]} />
 
                     {activeTab === 'treasury' && (
                         <div>
