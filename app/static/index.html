@@ -40,10 +40,12 @@
             /* Pages that keep their original sizing. The marketing site, plus
                three application pages whose layouts were built around the type
                they had and read worse at the larger scale. */
-            var UNSCALED = ['/', '/home', '/pricing', '/contact', '/login',
-                            '/reports', '/ingestion', '/reconciliation'];
+            /* Every signed-in page shares ONE type scale, so the same kind of
+               thing (a page title, a card heading, a table, a tile, a button)
+               is the same size on every tab. Only the public pages differ. */
+            var UNSCALED = ['/', '/home', '/pricing', '/contact', '/login'];
             if (UNSCALED.indexOf(p) !== -1) return;        // unclassed = original scale
-            var isDash = p === '/dashboard' || p === '/dashboard-ui';
+            var isDash = false;
             document.documentElement.classList.add(isDash ? 'app-dashboard' : 'app-inner');
             document.addEventListener('DOMContentLoaded', function () {
                 document.body.classList.add(isDash ? 'app-dashboard' : 'app-inner');
@@ -968,6 +970,11 @@
                 let scope = '';
                 if (selectedBankId)   scope += `&account_id=${selectedBankId}`;
                 if (selectedEntityId) scope += `&entity_id=${selectedEntityId}`;
+                // Dated like the tiles above them: the header counts come from
+                // /dashboard/summary, which applies the date bar, so the lists
+                // must too or a header of 3 sits over a list of 12.
+                if (fromDate) scope += `&start_date=${fromDate}`;
+                if (toDate)   scope += `&end_date=${toDate}`;
 
                 const [ov, an, vi, ru] = await Promise.allSettled([
                     apiFetch('/compliance/overview' + (scope ? '?' + scope.slice(1) : '')),
@@ -1617,30 +1624,30 @@
                is shown that the data does not contain. */
             const movement = React.useMemo(() => {
                 const g = treasury && treasury.group_totals;
-                const trend = (treasury && treasury.monthly_trend) || [];
 
                 if (movementView === 'months') {
-                    /* The treasury report builds its monthly trend from the
-                       whole transaction history rather than the resolved
-                       period, so it arrives holding months the filter bar has
-                       excluded. Scoped here rather than left as-is: a bridge
-                       showing April when the date range starts in October is
-                       the "one chart on a different date range" problem, and it
-                       is invisible until someone adds the bars up. */
-                    const inWindow = trend.filter(m => {
-                        if (!fromDate && !toDate) return true;
-                        const key = m.year + '-' + String(m.month).padStart(2, '0');
-                        if (fromDate && key < fromDate.substring(0, 7)) return false;
-                        if (toDate && key > toDate.substring(0, 7)) return false;
-                        return true;
+                    /* Built from the daily cash-flow series this page already
+                       holds — the one request scoped and dated exactly like
+                       every other panel. It used to come from the treasury
+                       report's 12-month trend clipped by month, which still
+                       counted the days of a partial month outside the date
+                       range and dropped anything older than twelve months. */
+                    const byMonth = new Map();
+                    (cashFlow || []).forEach(d => {
+                        const key = String(d.period || '').substring(0, 7);
+                        if (!key) return;
+                        byMonth.set(key, (byMonth.get(key) || 0) + (d.inflow || 0) - (d.outflow || 0));
                     });
-                    if (!inWindow.length) return { available: false };
+                    const keys = [...byMonth.keys()].sort();
+                    if (!keys.length) return { available: false };
+                    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
                     let running = 0;
-                    const bars = inWindow.map(m => {
-                        const delta = m.net_flow || 0;
+                    const bars = keys.map(k => {
+                        const delta = Math.round(byMonth.get(k) * 100) / 100;
                         const seg = [running, running + delta];
                         running += delta;
-                        return { label: m.month_label, seg, delta, kind: delta >= 0 ? 'up' : 'down' };
+                        const [y, m] = k.split('-');
+                        return { label: MONTHS[parseInt(m, 10) - 1] + ' ' + y, seg, delta, kind: delta >= 0 ? 'up' : 'down' };
                     });
                     bars.push({ label: 'Net', seg: [0, running], delta: running, kind: 'total' });
                     return { available: true, bars, mode: 'months' };
@@ -1675,7 +1682,7 @@
                 bars.push({ label: 'Closing cash', seg: [0, running], delta: running, kind: 'total' });
 
                 return { available: true, bars, mode: 'drivers', closing: running };
-            }, [treasury, movementView, fromDate, toDate]);
+            }, [treasury, cashFlow, movementView]);
 
             useEffect(() => {
                 if (!movementRef.current) return;
@@ -2303,7 +2310,9 @@
                                 <span>
                                     Statement data is {summary.data_age_days} days old
                                     {summary.last_statement_date ? ' — latest posting ' + summary.last_statement_date : ''}.
-                                    Every figure below is as at that date, not today.
+                                    {(toDate && summary.last_statement_date && toDate < summary.last_statement_date)
+                                        ? ' Figures below are as at the To date, ' + toDate + '.'
+                                        : ' Every figure below is as at that date, not today.'}
                                 </span>
                             )}
                             {ccy.mixed && (
@@ -3773,7 +3782,98 @@
             const [emailInput, setEmailInput] = useState('');
             const [routingBusy, setRoutingBusy] = useState(false);
 
-            const handleRouteAndConnect = async (addrToConnect, existingConnectionId) => {
+            /* The sign-in in progress: { label, url, state, email, blocked, error }.
+               Shown at the top of the tab, so the user always sees what is
+               happening — including a sign-in window the browser blocked. */
+            const [signin, setSignin] = useState(null);
+            const [imapAlternatives, setImapAlternatives] = useState([]);
+
+            const openSigninWindow = (url) => {
+                const width = 600, height = 720;
+                const left = Math.max(0, (window.screen.width - width) / 2);
+                const top = Math.max(0, (window.screen.height - height) / 2);
+                return window.open(url, 'MailboxOAuth',
+                    `width=${width},height=${height},top=${top},left=${left},status=1,resizable=1`);
+            };
+
+            /* Waits for the provider to send the user back. The server records
+               the outcome against the sign-in's state, so this asks the server
+               rather than trusting the popup to report back: a popup can be
+               blocked, and Google's and Microsoft's pages can cut it off from
+               this tab. Messages from the popup only make the next check sooner. */
+            const watchSignin = (state, label, addr) => {
+                const started = Date.now();
+                let done = false;
+                let bc = null;
+                const finish = () => {
+                    done = true;
+                    dropTimer(interval);
+                    window.removeEventListener('message', onMessage);
+                    try { bc && bc.close(); } catch (e) {}
+                };
+                const check = async () => {
+                    if (done) return;
+                    let res = null;
+                    try { res = await apiFetch(`/email/oauth/result?state=${encodeURIComponent(state)}`); } catch (e) { return; }
+                    if (done || !res) return;
+                    if (res.status === 'connected') {
+                        finish();
+                        setSignin(null);
+                        setProviderWarning('');
+                        setImapAlternatives([]);
+                        setShowImapForm(false);
+                        setEmailInput('');
+                        const typed = (addr || '').toLowerCase();
+                        const got = (res.email_address || '').toLowerCase();
+                        setMsg(`Connected ${res.email_address}` +
+                            (typed && got && typed !== got ? ` (you entered ${addr} — the account chosen on the ${label} page was connected)` : '') +
+                            (res.scan_id ? '. Looking for statements now…' : '.'));
+                        await loadEmailData();
+                        if (res.scan_id) {
+                            setLoading(true);
+                            setScans([]);
+                            pollScans([res.scan_id]);
+                        }
+                    } else if (res.status === 'failed') {
+                        finish();
+                        setSignin(prev => prev ? { ...prev, error: res.detail || 'The sign-in did not complete.' } : prev);
+                    } else if (Date.now() - started > 10 * 60 * 1000) {
+                        finish();
+                        setSignin(prev => prev ? { ...prev, error: `No answer from ${label} after 10 minutes. Start again when ready.` } : prev);
+                    }
+                };
+                const onMessage = (event) => {
+                    if (event.origin !== window.location.origin) return;
+                    if (event.data && (event.data.type === 'MAILBOX_CONNECTED' || event.data.type === 'MAILBOX_CONNECT_FAILED')) check();
+                };
+                window.addEventListener('message', onMessage);
+                try {
+                    bc = new BroadcastChannel('kredo-mailbox');
+                    bc.onmessage = (e) => { if (e.data && e.data.state === state) check(); };
+                } catch (e) {}
+                const interval = trackTimer(setInterval(check, 2000));
+            };
+
+            /* `popup` is a window opened synchronously in the click handler,
+               before any await: browsers only allow a popup during the click
+               itself, and finding the provider (a DNS lookup) takes longer. */
+            const startOAuth = (data, addr, popup) => {
+                const label = data.provider_label || (data.provider === 'gmail' ? 'Google' : 'Microsoft');
+                if (data.configured === false && data.warning) setProviderWarning(data.warning);
+                let blocked = false;
+                if (popup && !popup.closed) {
+                    try { popup.location.href = data.authorization_url; } catch (e) { blocked = true; }
+                } else {
+                    blocked = !openSigninWindow(data.authorization_url);
+                }
+                setSignin({ label, url: data.authorization_url, state: data.state, email: addr, blocked, error: null });
+                setMsg(blocked
+                    ? `Your browser blocked the ${label} sign-in window. Use the button above to open it.`
+                    : `Waiting for you to sign in to ${label} as ${addr} in the window that opened…`);
+                watchSignin(data.state, label, addr);
+            };
+
+            const handleRouteAndConnect = async (addrToConnect) => {
                 const addr = (addrToConnect || emailInput || '').trim();
                 if (!addr || addr.indexOf('@') === -1) {
                     setValidationErr('Please enter a valid email address.');
@@ -3781,70 +3881,24 @@
                 }
                 setValidationErr('');
                 setProviderWarning('');
+                setSignin(null);
+                setImapAlternatives([]);
+                const popup = openSigninWindow('about:blank');
+                try { if (popup) popup.document.write('<p style="font-family:system-ui;padding:24px;color:#475569">Finding your mail provider…</p>'); } catch (e) {}
                 setRoutingBusy(true);
-                setMsg(`Resolving mailbox provider for ${addr}...`);
+                setMsg(`Finding the mail provider for ${addr}...`);
                 try {
                     const routeData = await apiFetch('/email/route', {
                         method: 'POST',
                         body: JSON.stringify({ email_address: addr })
                     });
-
                     if (routeData.auth_type === 'oauth') {
-                        if (routeData.configured === false && routeData.warning) {
-                            setProviderWarning(routeData.warning);
-                        }
-                        const label = routeData.provider_label || routeData.provider;
-                        setMsg(`Opening ${label} sign-in window for ${addr}...`);
-
-                        const width = 600;
-                        const height = 700;
-                        const left = Math.max(0, (window.innerWidth - width) / 2);
-                        const top = Math.max(0, (window.innerHeight - height) / 2);
-                        const popup = window.open(
-                            routeData.authorization_url,
-                            'MailboxOAuth',
-                            `width=${width},height=${height},top=${top},left=${left},status=1,resizable=1`
-                        );
-
-                        const handleMessage = (event) => {
-                            if (event.data && (event.data.type === 'MAILBOX_CONNECTED' || event.data.type === 'GMAIL_CONNECTED')) {
-                                setMsg(`Mailbox connected: ${event.data.email}`);
-                                setEmailInput('');
-                                loadEmailData();
-                                window.removeEventListener('message', handleMessage);
-                            }
-                        };
-                        window.addEventListener('message', handleMessage);
-
-                        const before = connectionsRef.current.length;
-                        const interval = trackTimer(setInterval(async () => {
-                            try {
-                                const list = await apiFetch('/email/connections');
-                                const arr = Array.isArray(list) ? list : [];
-                                const reconnected = existingConnectionId
-                                    ? arr.some(c => c.id === existingConnectionId && c.status === 'CONNECTED')
-                                    : false;
-                                if (arr.length > before || reconnected) {
-                                    dropTimer(interval);
-                                    window.removeEventListener('message', handleMessage);
-                                    setConnections(arr);
-                                    connectionsRef.current = arr;
-                                    const fresh = existingConnectionId
-                                        ? arr.find(c => c.id === existingConnectionId)
-                                        : arr[arr.length - 1];
-                                    setMsg(`Connected mailbox: ${fresh ? fresh.email_address : addr}`);
-                                    setEmailInput('');
-                                    loadEmailData();
-                                } else if (popup && popup.closed) {
-                                    dropTimer(interval);
-                                    window.removeEventListener('message', handleMessage);
-                                    loadEmailData();
-                                }
-                            } catch (e) {}
-                        }, 2000));
-                    } else if (routeData.auth_type === 'app_password') {
+                        startOAuth(routeData, addr, popup);
+                    } else {
+                        try { popup && popup.close(); } catch (e) {}
                         setShowImapForm(true);
                         setImapErr('');
+                        setImapAlternatives(routeData.alternatives || []);
                         setImapForm(prev => ({
                             ...prev,
                             email_address: addr,
@@ -3852,13 +3906,29 @@
                             imap_port: (routeData.imap_settings && routeData.imap_settings.imap_port) || 993,
                             use_ssl: routeData.imap_settings ? routeData.imap_settings.use_ssl !== false : true,
                         }));
-                        setMsg(`Detected IMAP mailbox for ${routeData.domain}. Enter your application-specific password to finish connecting.`);
+                        setMsg(`${routeData.domain} is not hosted on Google or Microsoft as far as its DNS shows. `
+                            + `Enter an application-specific password below, or sign in with Google or Microsoft if that is where this mailbox lives.`);
                     }
                 } catch (err) {
+                    try { popup && popup.close(); } catch (e) {}
                     setValidationErr(`Connection error: ${err.message}`);
                     setMsg(`Connection failed: ${err.message}`);
                 } finally {
                     setRoutingBusy(false);
+                }
+            };
+
+            // "Sign in with Google / Microsoft instead" for an address DNS could not place.
+            const handleProviderSignin = async (providerKey, addr) => {
+                const address = (addr || imapForm.email_address || emailInput || '').trim();
+                setValidationErr('');
+                const popup = openSigninWindow('about:blank');
+                try {
+                    const data = await apiFetch(`/email/connections/${providerKey}/authorize?login_hint=${encodeURIComponent(address)}`, { method: 'POST' });
+                    startOAuth({ ...data, provider_label: providerKey === 'gmail' ? 'Google' : 'Microsoft' }, address, popup);
+                } catch (err) {
+                    try { popup && popup.close(); } catch (e) {}
+                    setValidationErr(`Connection error: ${err.message}`);
                 }
             };
 
@@ -3870,7 +3940,7 @@
                     setMsg('Re-enter the application-specific password for this mailbox to reconnect it.');
                     return;
                 }
-                handleRouteAndConnect(conn.email_address, conn.id);
+                handleRouteAndConnect(conn.email_address);
             };
 
             const handleImapSuggest = async () => {
@@ -4176,6 +4246,31 @@
                         </div>
                     )}
 
+                    {signin && (
+                        <div style={{ marginBottom: '1.5rem', padding: '0.75rem 1rem', borderRadius: '4px', fontSize: '0.54rem',
+                                      background: signin.error ? '#fef2f2' : '#eff6ff',
+                                      border: `1px solid ${signin.error ? '#fecaca' : '#bfdbfe'}`,
+                                      color: signin.error ? '#991b1b' : '#1e3a8a',
+                                      display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                            <span style={{ flex: '1 1 300px' }}>
+                                {signin.error
+                                    ? <>Could not connect {signin.email}: {signin.error}</>
+                                    : signin.blocked
+                                        ? <>Your browser blocked the {signin.label} sign-in window for {signin.email}.</>
+                                        : <>Waiting for you to sign in to {signin.label} as {signin.email}. Finish in the window that opened.</>}
+                            </span>
+                            {!signin.error && (
+                                <a className="btn btn-sm btn-primary" href={signin.url} target="MailboxOAuth" rel="opener">
+                                    {signin.blocked ? `Open ${signin.label} sign-in` : `Reopen ${signin.label} sign-in`}
+                                </a>
+                            )}
+                            {signin.error && (
+                                <button className="btn btn-sm btn-primary" onClick={() => handleRouteAndConnect(signin.email)}>Try again</button>
+                            )}
+                            <button className="btn btn-sm" onClick={() => setSignin(null)}>Dismiss</button>
+                        </div>
+                    )}
+
                     {/* Application-password (IMAP) connect form */}
                     {showImapForm && (
                         <div className="card" style={{ marginBottom: '1.5rem' }}>
@@ -4184,6 +4279,17 @@
                                 <span style={{ fontSize: '0.48rem', color: 'var(--gray-600)' }}>Any IMAP mailbox — custom domain, university, company, Yahoo, Zoho, Fastmail</span>
                             </div>
                             <div className="card-body">
+                                {imapAlternatives.length > 0 && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem', fontSize: '0.5rem', color: 'var(--gray-600)' }}>
+                                        <span>Is this mailbox on Google Workspace or Microsoft 365?</span>
+                                        {imapAlternatives.includes('gmail') && (
+                                            <button className="btn btn-sm" onClick={() => handleProviderSignin('gmail')}>Sign in with Google</button>
+                                        )}
+                                        {imapAlternatives.includes('microsoft') && (
+                                            <button className="btn btn-sm" onClick={() => handleProviderSignin('microsoft')}>Sign in with Microsoft</button>
+                                        )}
+                                    </div>
+                                )}
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem' }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                                         <label htmlFor="imap-email" style={{ fontSize: '0.48rem', fontWeight: 'bold', color: 'var(--gray-800)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -5924,6 +6030,10 @@
             // ledger_convention: 'STANDARD' = normal CSV (Debit=Out, Credit=In)
             //                     'DEBIT_IN'  = Tally style (Debit=In, Credit=Out)
             const [ledgerConvention, setLedgerConvention] = useState('STANDARD');
+            // Book (ledger) balance at Period Start. Needed only for the first
+            // reconciliation of an account, or when the ledger file has no
+            // "Opening Balance" row; later periods continue from the last run.
+            const [bookOpening, setBookOpening] = useState('');
             const [periodFrom, setPeriodFrom] = useState('');
             const [periodTo, setPeriodTo] = useState('');
             const [runResult, setRunResult] = useState(null);
@@ -5997,6 +6107,7 @@
                             save_as_template: false,
                             template_name: '',
                             ledger_convention: ledgerConvention,
+                            book_opening: bookOpening.trim() || null,
                             rows: previewData.sample_rows
                         })
                     });
@@ -6016,6 +6127,7 @@
                             period_from: runFrom,
                             period_to: runTo,
                             import_batch_id: batchId,
+                            book_opening: bookOpening.trim() || null,
                             force: true
                         })
                     });
@@ -6109,16 +6221,19 @@
                     return { label: 'Unexplained bank transaction', icon: '' };
                 }
                 if (cat.includes('unpresented')) {
-                    return { label: 'Cheque issued but not yet cleared at bank', icon: '' };
+                    return { label: 'Payment in books, not yet cleared at bank', icon: '' };
                 }
                 if (cat.includes('uncleared') || cat.includes('transit')) {
-                    return { label: 'Payment made but not yet shown in bank', icon: '' };
+                    return { label: 'Receipt in books, not yet credited by bank', icon: '' };
                 }
                 if (cat === 'duplicate_ledger_credit') {
-                    return { label: 'Duplicate ledger credit — books overcounted (reversed)', icon: '️' };
+                    return { label: 'Possible duplicate ledger receipt — check and correct the books', icon: '️' };
                 }
                 if (cat === 'duplicate_ledger_debit') {
-                    return { label: 'Duplicate ledger debit — books overcounted (reversed)', icon: '️' };
+                    return { label: 'Possible duplicate ledger payment — check and correct the books', icon: '️' };
+                }
+                if (cat === 'amount_difference') {
+                    return { label: 'Amount differs between books and bank — correct the books', icon: '️' };
                 }
                 return { label: item.category || 'Timing difference', icon: '' };
             };
@@ -6128,9 +6243,10 @@
                 if (!reason) return '';
                 const r = String(reason).toLowerCase();
                 if (r === 'journal_entry_required') return 'Journal entry required';
-                if (r === 'deposit_in_transit_delayed') return 'Payment made but not yet shown in bank';
+                if (r === 'deposit_in_transit_delayed') return 'Receipt not credited by bank after 7 days';
                 if (r === 'stale_cheque_write_back_required') return 'Stale cheque — write back required';
-                if (r === 'duplicate_ledger_row') return 'Duplicate ledger entry';
+                if (r === 'duplicate_ledger_row' || r === 'possible_duplicate_ledger_row') return 'Possible duplicate ledger entry';
+                if (r === 'book_amount_differs_from_bank') return 'Book amount differs from bank';
                 return reason.replace(/_/g, ' ');
             };
 
@@ -6188,6 +6304,21 @@
                                             <option value="DEBIT_IN">DEBIT_IN — Debit=In, Credit=Out (Tally)</option>
                                         </select>
                                     </div>
+                                    <div>
+                                        <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.48rem', marginBottom: '0.4rem' }}>BOOK OPENING BALANCE (₹)</label>
+                                        <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={bookOpening}
+                                            onChange={e => setBookOpening(e.target.value)}
+                                            placeholder="e.g. 1,25,000.00 (minus for overdraft)"
+                                            id="recon-book-opening"
+                                            style={{ minWidth: '220px' }}
+                                        />
+                                        <div style={{ fontSize: '0.42rem', color: 'var(--gray-600)', marginTop: '0.25rem', maxWidth: '260px' }}>
+                                            Ledger balance on Period Start. Only needed the first time, or if the file has no Opening Balance row.
+                                        </div>
+                                    </div>
                                 </div>
 
                                 {!isFormValid && (
@@ -6219,11 +6350,11 @@
                                     </p>
                                     <input type="file" id="recon-file-input" style={{ display: 'none' }} accept=".csv,.xlsx,.xls" onChange={handleFileInput} disabled={!isFormValid} />
                                     {isFormValid ? (
-                                        <label htmlFor="recon-file-input" className="btn btn-primary" style={{ cursor: 'pointer', padding: '0.75rem 2rem', fontSize: '0.6rem' }}>
+                                        <label htmlFor="recon-file-input" className="btn btn-primary" style={{ cursor: 'pointer', padding: '0.45rem 1.25rem' }}>
                                             Choose Books File
                                         </label>
                                     ) : (
-                                        <button type="button" onClick={validateInputs} className="btn btn-primary" style={{ cursor: 'not-allowed', padding: '0.75rem 2rem', fontSize: '0.6rem', opacity: 0.6 }}>
+                                        <button type="button" onClick={validateInputs} className="btn btn-primary" style={{ cursor: 'not-allowed', padding: '0.45rem 1.25rem', opacity: 0.6 }}>
                                             Choose Books File
                                         </button>
                                     )}
@@ -6603,10 +6734,18 @@
                                                                 <button className="btn btn-sm btn-primary" style={{ marginRight: '0.5rem' }} onClick={async () => {
                                                                     await apiFetch(`/v1/reconciliation/matches/${m.match_id}/confirm`, { method: 'POST' });
                                                                     setMatches(matches.filter(x => x.match_id !== m.match_id));
+                                                                    // The server rebuilt the BRS; show the new totals and verdict.
+                                                                    if (runResult && runResult.id) {
+                                                                        apiFetch(`/v1/reconciliation/runs/${runResult.id}`).then(setRunResult).catch(() => {});
+                                                                    }
                                                                 }}> Yes, they match</button>
                                                                 <button className="btn btn-sm" onClick={async () => {
                                                                     await apiFetch(`/v1/reconciliation/matches/${m.match_id}/reject`, { method: 'POST' });
                                                                     setMatches(matches.filter(x => x.match_id !== m.match_id));
+                                                                    // The server rebuilt the BRS; show the new totals and verdict.
+                                                                    if (runResult && runResult.id) {
+                                                                        apiFetch(`/v1/reconciliation/runs/${runResult.id}`).then(setRunResult).catch(() => {});
+                                                                    }
                                                                 }}> Not a match</button>
                                                             </td>
                                                         </tr>
@@ -6633,6 +6772,99 @@
         // category at all. The tab is therefore "Manual Review", not
         // "Uncategorized": calling it the latter told the reader something
         // untrue about every row in it. Backend: /v1/review-queue.
+        /* Shared page furniture. Every signed-in page builds its title, tiles
+           and banners from these, so the same kind of thing looks the same on
+           every tab (styles: "ONE LOOK FOR EVERY SIGNED-IN PAGE" in styles.css). */
+        function PageHeader({ title, subtitle, actions }) {
+            return (
+                <div className="page-header">
+                    <div>
+                        <h2 className="page-title">{title}</h2>
+                        {subtitle && <p className="page-subtitle">{subtitle}</p>}
+                    </div>
+                    {actions && <div className="page-actions">{actions}</div>}
+                </div>
+            );
+        }
+
+        function StatTiles({ tiles }) {
+            const shown = (tiles || []).filter(Boolean);
+            if (!shown.length) return null;
+            return (
+                <div className="stats-grid">
+                    {shown.map(t => (
+                        <div key={t.label} className="stat-card" title={t.title || ''}>
+                            <div className="stat-label">{t.label}</div>
+                            <div className="stat-value" style={t.color ? { color: t.color } : (t.warn ? { color: '#b45309' } : undefined)}>{t.value}</div>
+                            {t.sub && <div className="stat-change">{t.sub}</div>}
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+
+        function Banner({ kind = 'info', children, onClose }) {
+            if (!children) return null;
+            return (
+                <div className={`banner banner-${kind}`}>
+                    <span className="banner-text">{children}</span>
+                    {onClose && (
+                        <button className="mini-btn" onClick={onClose} aria-label="Dismiss">✕</button>
+                    )}
+                </div>
+            );
+        }
+
+        /* One transaction row, as every Review Queue tab shows it: who it is
+           with, a small badge, the narration on demand, the date, and the
+           amount in a Paid out or a Received column. Manual Review, Cross-Source
+           Duplicates and BRS Match Candidates all render through this, so the
+           transaction part of the three tabs cannot drift apart. `extra` sits
+           on the name line after the Narration button (e.g. "×3 together",
+           "in books"); the decision column is the only thing a tab owns. */
+        function ReviewTxnCells({ row, open, onToggle, extra }) {
+            const name = row.counterparty || row.narration || '—';
+            const badge = row.group_kind === 'pattern'
+                ? 'Charge'
+                : (row.group_channel && row.group_channel !== 'plain'
+                    ? row.group_channel : 'party');
+            return (
+                <React.Fragment>
+                    <td style={{ padding: '0.24rem 0.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'nowrap' }}>
+                            <span style={{ fontWeight: '600', color: 'var(--black)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '160px' }} title={name}>
+                                {name}
+                            </span>
+                            <span style={{ fontSize: '0.408rem', color: 'var(--gray-500)', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+                                [{badge}]
+                            </span>
+                            <button className="mini-btn" style={{ padding: '0.04rem 0.22rem', fontSize: '0.408rem', flexShrink: 0 }}
+                                onClick={onToggle}>
+                                {open ? 'Hide' : 'Narration'}
+                            </button>
+                            {extra}
+                        </div>
+                        {open && (
+                            <div style={{ marginTop: '0.3rem', fontSize: '0.408rem', color: 'var(--gray-600)', lineHeight: '1.4', wordBreak: 'break-all' }}>
+                                {row.narration || '—'}
+                            </div>
+                        )}
+                    </td>
+                    <td style={{ fontSize: '0.45rem', color: 'var(--gray-600)', whiteSpace: 'nowrap' }}>
+                        {row.txn_date || '—'}
+                    </td>
+                    {/* Two money columns: money out and money in in different
+                        places, which is how a ledger is read. */}
+                    <td className="number-cell amount-col" style={{ whiteSpace: 'nowrap' }}>
+                        {row.direction === 'credit' ? '—' : window.money(row.amount)}
+                    </td>
+                    <td className="number-cell amount-col" style={{ whiteSpace: 'nowrap' }}>
+                        {row.direction === 'credit' ? window.money(row.amount) : '—'}
+                    </td>
+                </React.Fragment>
+            );
+        }
+
         function CategorizationReviewTab({ onCountChange }) {
             const PAGE_SIZE = 25;
 
@@ -6841,62 +7073,26 @@
             return (
                 <div>
                     {summary && (
-                        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.9rem', flexWrap: 'wrap' }}>
-                            {/* flex: '0 0 auto' is load-bearing. `.card` carries a
-                                global width:100%, so without it each of these
-                                stacks full-width down the page instead of sitting
-                                in a row. */}
-                            <div className="card" style={{ padding: '0.6rem 0.9rem', minWidth: '150px', width: 'auto', flex: '0 0 auto', marginBottom: 0 }}>
-                                <div style={{ fontSize: '0.45rem', color: 'var(--gray-600)', textTransform: 'uppercase' }}>Awaiting review</div>
-                                <div style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>{summary.total_requiring_review}</div>
-                            </div>
-                            <div className="card" style={{ padding: '0.6rem 0.9rem', minWidth: '150px', width: 'auto', flex: '0 0 auto', marginBottom: 0 }}>
-                                <div style={{ fontSize: '0.45rem', color: 'var(--gray-600)', textTransform: 'uppercase' }}>Parties to decide</div>
-                                {/* DECISIONS, not the sum of decisions and
-                                    nods. This tile used to show every group in
-                                    the queue — 135, of which 107 were rows that
-                                    already had a category and only wanted
-                                    confirming. That reads as 135 questions and
-                                    it was 28. */}
-                                <div style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>
-                                    {summary.counterparties_needing_category !== undefined
-                                        ? summary.counterparties_needing_category
-                                        : (summary.counterparties_total !== undefined
-                                            ? summary.counterparties_total : groups.length)}
-                                </div>
-                                {summary.counterparties_confirm_only > 0 && (
-                                    <div style={{ fontSize: '0.4rem', color: 'var(--gray-600)' }}>
-                                        + {summary.counterparties_confirm_only} only need confirming
-                                    </div>
-                                )}
-                            </div>
-                            {/* Two different jobs, shown as two numbers. Needs a
-                                category = no category at all, the real backlog.
-                                Confirm = already categorized from the narration,
-                                wants a yes/no. */}
-                            <div className="card" style={{ padding: '0.6rem 0.9rem', minWidth: '150px', width: 'auto', flex: '0 0 auto', marginBottom: 0 }}>
-                                <div style={{ fontSize: '0.45rem', color: 'var(--gray-600)', textTransform: 'uppercase' }}>Needs a category</div>
-                                <div style={{ fontSize: '0.9rem', fontWeight: 'bold', color: (summary.needs_category || 0) > 0 ? '#b45309' : 'inherit' }}>
-                                    {summary.needs_category !== undefined ? summary.needs_category : summary.uncategorized}
-                                </div>
-                            </div>
-                            <div className="card" style={{ padding: '0.6rem 0.9rem', minWidth: '150px', width: 'auto', flex: '0 0 auto', marginBottom: 0 }}>
-                                <div style={{ fontSize: '0.45rem', color: 'var(--gray-600)', textTransform: 'uppercase' }}>Categorized, confirm</div>
-                                <div style={{ fontSize: '0.9rem', fontWeight: 'bold' }}>{summary.awaiting_confirmation || 0}</div>
-                            </div>
-                        </div>
+                        <StatTiles tiles={[
+                            { label: 'Awaiting review', value: summary.total_requiring_review },
+                            /* DECISIONS, not the sum of decisions and nods: the
+                               groups that still need a category, with those that
+                               only want confirming noted underneath. */
+                            { label: 'Parties to decide',
+                              value: summary.counterparties_needing_category !== undefined
+                                  ? summary.counterparties_needing_category
+                                  : (summary.counterparties_total !== undefined ? summary.counterparties_total : groups.length),
+                              sub: summary.counterparties_confirm_only > 0
+                                  ? `+ ${summary.counterparties_confirm_only} only need confirming` : null },
+                            { label: 'Needs a category',
+                              value: summary.needs_category !== undefined ? summary.needs_category : summary.uncategorized,
+                              warn: (summary.needs_category || 0) > 0 },
+                            { label: 'Categorized, confirm', value: summary.awaiting_confirmation || 0 },
+                        ]} />
                     )}
 
-                    {msg && (
-                        <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#065f46', padding: '0.75rem 1rem', borderRadius: '4px', marginBottom: '1rem', fontSize: '0.54rem' }}>
-                            {msg}
-                        </div>
-                    )}
-                    {error && (
-                        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '0.75rem 1rem', borderRadius: '4px', marginBottom: '1rem', fontSize: '0.54rem' }}>
-                            {error}
-                        </div>
-                    )}
+                    <Banner kind="ok">{msg}</Banner>
+                    <Banner kind="error">{error}</Banner>
 
                     {/* Two ways to do the same work. Counterparty mode asks one
                         question per trading partner; transaction mode asks one per
@@ -7105,58 +7301,20 @@
                                         {items.map(item => {
                                             const busy = savingId === item.transaction_id;
                                             const narrOpen = !!openNarr[item.transaction_id];
-                                            const name = item.counterparty || item.narration || '—';
-                                            const badge = item.group_kind === 'pattern'
-                                                ? 'Charge'
-                                                : (item.group_channel && item.group_channel !== 'plain'
-                                                    ? item.group_channel : 'party');
                                             const chosen = selection[item.transaction_id] || '';
                                             return (
                                             <tr key={item.transaction_id} style={{ verticalAlign: 'middle' }}>
-                                                <td style={{ padding: '0.24rem 0.5rem' }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'nowrap' }}>
-                                                        <span style={{ fontWeight: '600', color: 'var(--black)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '160px' }} title={name}>
-                                                            {name}
-                                                        </span>
-                                                        <span style={{ fontSize: '0.408rem', color: 'var(--gray-500)', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
-                                                            [{badge}]
-                                                        </span>
-                                                        <button className="mini-btn" style={{ padding: '0.04rem 0.22rem', fontSize: '0.408rem', flexShrink: 0 }}
-                                                            onClick={() => setOpenNarr(prev => ({ ...prev, [item.transaction_id]: !narrOpen }))}>
-                                                            {narrOpen ? 'Hide' : 'Narration'}
-                                                        </button>
-                                                        {/* On the name line, not under it. One answer settles the
-                                                            whole group and that is worth saying where the question
-                                                            is asked — but as a second line it cost every row ~10px
-                                                            of height, which is the thing that made this table feel
-                                                            heavier than the counterparty one. */}
-                                                        {item.group_size > 1 && (
-                                                            <a href="#" onClick={e => { e.preventDefault(); setViewMode('counterparties'); }}
-                                                               title={`${item.group_size} rows share this counterparty — decide them together`}
-                                                               style={{ fontSize: '0.408rem', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                                                                ×{item.group_size} together
-                                                            </a>
-                                                        )}
-                                                    </div>
-                                                    {narrOpen && (
-                                                        <div style={{ marginTop: '0.3rem', fontSize: '0.408rem', color: 'var(--gray-600)', lineHeight: '1.4', wordBreak: 'break-all' }}>
-                                                            {item.narration || '—'}
-                                                        </div>
-                                                    )}
-                                                </td>
-                                                <td style={{ fontSize: '0.45rem', color: 'var(--gray-600)', whiteSpace: 'nowrap' }}>
-                                                    {item.txn_date || '—'}
-                                                </td>
-                                                {/* Split into two money columns like the group tile. A single
-                                                    signed Amount column makes the reader decode the direction
-                                                    from a label; two columns put money out and money in in
-                                                    different places, which is how a ledger is read. */}
-                                                <td className="number-cell amount-col" style={{ whiteSpace: 'nowrap' }}>
-                                                    {item.direction === 'credit' ? '—' : window.money(item.amount)}
-                                                </td>
-                                                <td className="number-cell amount-col" style={{ whiteSpace: 'nowrap' }}>
-                                                    {item.direction === 'credit' ? window.money(item.amount) : '—'}
-                                                </td>
+                                                <ReviewTxnCells
+                                                    row={item}
+                                                    open={narrOpen}
+                                                    onToggle={() => setOpenNarr(prev => ({ ...prev, [item.transaction_id]: !narrOpen }))}
+                                                    extra={item.group_size > 1 && (
+                                                        <a href="#" onClick={e => { e.preventDefault(); setViewMode('counterparties'); }}
+                                                           title={`${item.group_size} rows share this counterparty — decide them together`}
+                                                           style={{ fontSize: '0.408rem', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                                            ×{item.group_size} together
+                                                        </a>
+                                                    )} />
                                                 <td style={{ padding: '0.24rem 0.5rem' }}>
                                                     <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
                                                         <select
@@ -7205,283 +7363,293 @@
             );
         }
 
+        /* Cross-Source Duplicates and BRS Match Candidates, laid out exactly as
+           Manual Review's one-by-one table: the same summary tiles, the same
+           banners, the same five columns and the same transaction rows (via
+           ReviewTxnCells). A candidate is two or more transactions, so its rows
+           sit together and share one decision cell. */
+        function PairReviewTab({ loading, error, msg, tiles, note, matches, keyOf, roleOf,
+                                 decisionHeader, confirmLabel, rejectLabel, onConfirm, onReject,
+                                 detailOf, emptyText }) {
+            const [openNarr, setOpenNarr] = useState({});
+            const [busyKey, setBusyKey] = useState(null);
+
+            const decide = async (fn, key) => {
+                setBusyKey(key);
+                try { await fn(key); } finally { setBusyKey(null); }
+            };
+
+            return (
+                <div>
+                    <StatTiles tiles={tiles} />
+
+                    <Banner kind="ok">{msg}</Banner>
+                    <Banner kind="error">{error}</Banner>
+
+                    {note && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.45rem', color: 'var(--gray-600)' }}>{note}</span>
+                        </div>
+                    )}
+
+                    {loading && matches.length === 0 ? (
+                        <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--gray-600)' }}>
+                            Loading review queue items...
+                        </div>
+                    ) : matches.length === 0 ? (
+                        <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--gray-600)' }}>
+                            {emptyText}
+                        </div>
+                    ) : (
+                        <div className="card" style={{ padding: 0 }}>
+                            <div className="table-responsive">
+                                <table className="transactions-table" style={{ width: '100%', tableLayout: 'fixed' }}>
+                                    <thead>
+                                        <tr>
+                                            <th style={{ width: '38%' }}>Transaction</th>
+                                            <th style={{ width: '12%', whiteSpace: 'nowrap' }}>Date</th>
+                                            <th className="number-cell amount-col" style={{ width: '14%' }}>Paid out</th>
+                                            <th className="number-cell amount-col" style={{ width: '14%' }}>Received</th>
+                                            <th style={{ width: '22%' }}>{decisionHeader}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {matches.map(m => {
+                                            const key = keyOf(m);
+                                            const rows = (m.rows && m.rows.length) ? m.rows : [null];
+                                            const busy = busyKey === key;
+                                            const detail = detailOf ? detailOf(m) : null;
+                                            return rows.map((row, i) => {
+                                                const rk = `${key}:${i}`;
+                                                const narrOpen = !!openNarr[rk];
+                                                const role = row ? roleOf(row, m) : null;
+                                                return (
+                                                    <tr key={rk} style={{ verticalAlign: 'middle' }}>
+                                                        {row ? (
+                                                            <ReviewTxnCells
+                                                                row={row}
+                                                                open={narrOpen}
+                                                                onToggle={() => setOpenNarr(prev => ({ ...prev, [rk]: !narrOpen }))}
+                                                                extra={role && (
+                                                                    <span title={role.title || ''}
+                                                                          style={{ fontSize: '0.408rem', whiteSpace: 'nowrap', flexShrink: 0, color: role.color || 'var(--gray-600)', fontWeight: role.strong ? '600' : 'normal' }}>
+                                                                        {role.text}
+                                                                    </span>
+                                                                )} />
+                                                        ) : (
+                                                            <td colSpan={4} style={{ padding: '0.24rem 0.5rem', fontSize: '0.45rem', color: 'var(--gray-600)' }}>
+                                                                The transactions of this candidate are no longer on file.
+                                                            </td>
+                                                        )}
+                                                        {i === 0 && (
+                                                            <td rowSpan={rows.length} style={{ padding: '0.24rem 0.5rem', borderLeft: rows.length > 1 ? '1px solid var(--gray-200)' : undefined }}>
+                                                                <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                                                                    <button
+                                                                        className="btn btn-sm btn-primary"
+                                                                        style={{ whiteSpace: 'nowrap', padding: '0.18rem 0.45rem', fontSize: '0.45rem', flexShrink: 0 }}
+                                                                        disabled={busy}
+                                                                        onClick={() => decide(onConfirm, key)}>
+                                                                        {busy ? 'Saving...' : confirmLabel}
+                                                                    </button>
+                                                                    <button
+                                                                        className="btn btn-sm"
+                                                                        style={{ whiteSpace: 'nowrap', padding: '0.18rem 0.45rem', fontSize: '0.45rem', flexShrink: 0 }}
+                                                                        disabled={busy}
+                                                                        onClick={() => decide(onReject, key)}>
+                                                                        {rejectLabel}
+                                                                    </button>
+                                                                </div>
+                                                                {detail && (
+                                                                    <div style={{ marginTop: '0.3rem', fontSize: '0.408rem', color: 'var(--gray-600)', lineHeight: '1.4', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
+                                                                        {detail}
+                                                                    </div>
+                                                                )}
+                                                            </td>
+                                                        )}
+                                                    </tr>
+                                                );
+                                            });
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const SOURCE_LABEL = { statement: 'statement', email_alert: 'email alert', sms: 'SMS', ledger: 'books' };
+        const BRS_TIER_LABEL = {
+            amount_difference: 'Same ID, amount differs',
+            tier_3_group: 'Several entries make one',
+            suggested: 'Suggested pair',
+            tier_1: 'Shared ID', tier_2: 'Same amount'
+        };
+
         function ReviewQueueView() {
             const [activeTab, setActiveTab] = useState('categorization'); // 'categorization' | 'dedup' | 'brs'
             const [catCount, setCatCount] = useState(0);
             const [dedupMatches, setDedupMatches] = useState([]);
             const [brsMatches, setBrsMatches] = useState([]);
             const [loading, setLoading] = useState(true);
-            const [error, setError] = useState(null);
-            const [actionMsg, setActionMsg] = useState('');
+            const [dedupError, setDedupError] = useState(null);
+            const [brsError, setBrsError] = useState(null);
+            const [dedupMsg, setDedupMsg] = useState('');
+            const [brsMsg, setBrsMsg] = useState('');
 
+            /* The two lists are independent, so they load together and each
+               failure costs only its own tab. BRS candidates come from the
+               latest run of EVERY account (/review-candidates); reading only the
+               newest run overall hid a second account's candidates. */
             const loadQueueData = async () => {
                 setLoading(true);
-                setError(null);
-                let runsErr = null;
-                try {
-                    /* 1 and 2 together. Pending duplicates and the reconciliation
-                       run list have nothing to do with each other, but they were
-                       awaited in sequence, so the tab paid both latencies end to
-                       end before the first list could appear. The run list keeps
-                       its own catch and is rethrown afterwards so that a broken
-                       /runs endpoint still leaves the duplicates list on screen,
-                       exactly as it did when the two were sequential. Step 3 below
-                       stays chained — it needs the id of the run this returns. */
-                    const [dedupRes, runsRes] = await Promise.all([
-                        apiFetch('/v1/deduplication/matches?status_filter=pending_review'),
-                        apiFetch('/v1/reconciliation/runs').catch(e => { runsErr = e; return null; })
-                    ]);
-                    setDedupMatches(Array.isArray(dedupRes) ? dedupRes : []);
-                    if (runsErr) throw runsErr;
-
-                    let pendingBrs = [];
-                    if (Array.isArray(runsRes) && runsRes.length > 0) {
-                        const latestRun = runsRes[0];
-                        const matchRes = await apiFetch(`/v1/reconciliation/runs/${latestRun.id}/matches?status=pending_review`);
-                        if (Array.isArray(matchRes)) {
-                            pendingBrs = matchRes;
-                        }
-                    }
-                    setBrsMatches(pendingBrs);
-                } catch (err) {
-                    setError(err.message || 'Failed to load review queue items');
-                } finally {
-                    setLoading(false);
+                setDedupError(null);
+                setBrsError(null);
+                const [dedupOut, brsOut] = await Promise.allSettled([
+                    apiFetch('/v1/deduplication/matches?status_filter=pending_review'),
+                    apiFetch('/v1/reconciliation/review-candidates')
+                ]);
+                if (dedupOut.status === 'fulfilled') {
+                    setDedupMatches(Array.isArray(dedupOut.value) ? dedupOut.value : []);
+                } else {
+                    setDedupError(dedupOut.reason?.message || 'Failed to load duplicate candidates');
                 }
+                if (brsOut.status === 'fulfilled') {
+                    setBrsMatches(Array.isArray(brsOut.value) ? brsOut.value : []);
+                } else {
+                    setBrsError(brsOut.reason?.message || 'Failed to load BRS match candidates');
+                }
+                setLoading(false);
             };
-
 
             useEffect(() => {
                 loadQueueData();
             }, []);
 
-            const handleConfirmDedup = async (matchId) => {
-                setActionMsg('');
+            const dedupDecide = (verb) => async (matchId) => {
+                setDedupMsg('');
+                setDedupError(null);
                 try {
-                    await apiFetch(`/v1/deduplication/matches/${matchId}/confirm`, { method: 'POST' });
+                    await apiFetch(`/v1/deduplication/matches/${matchId}/${verb}`, { method: 'POST' });
                     setDedupMatches(prev => prev.filter(m => m.id !== matchId));
-                    setActionMsg('Duplicate match confirmed successfully.');
+                    setDedupMsg(verb === 'confirm'
+                        ? 'Marked as a duplicate: the copy is removed from totals and the kept transaction stays.'
+                        : 'Kept both: they are counted as two separate transactions.');
                 } catch (err) {
-                    alert(`Failed to confirm match: ${err.message}`);
+                    setDedupError(`Could not save the decision: ${err.message}`);
                 }
             };
 
-            const handleRejectDedup = async (matchId) => {
-                setActionMsg('');
+            const brsDecide = (verb) => async (matchId) => {
+                setBrsMsg('');
+                setBrsError(null);
                 try {
-                    await apiFetch(`/v1/deduplication/matches/${matchId}/reject`, { method: 'POST' });
-                    setDedupMatches(prev => prev.filter(m => m.id !== matchId));
-                    setActionMsg('Duplicate match rejected successfully.');
-                } catch (err) {
-                    alert(`Failed to reject match: ${err.message}`);
-                }
-            };
-
-            const handleConfirmBRS = async (matchId) => {
-                setActionMsg('');
-                try {
-                    await apiFetch(`/v1/reconciliation/matches/${matchId}/confirm`, { method: 'POST' });
+                    const r = await apiFetch(`/v1/reconciliation/matches/${matchId}/${verb}`, { method: 'POST' });
                     setBrsMatches(prev => prev.filter(m => m.match_id !== matchId));
-                    setActionMsg('BRS match candidate confirmed successfully.');
+                    const verdict = r && r.verdict ? ` BRS is now ${r.verdict.replace(/_/g, ' ')}.` : '';
+                    setBrsMsg((verb === 'confirm' ? 'Match confirmed.' : 'Match rejected — the entries stay open on the BRS.') + verdict);
                 } catch (err) {
-                    alert(`Failed to confirm BRS match: ${err.message}`);
+                    setBrsError(`Could not save the decision: ${err.message}`);
                 }
             };
 
-            const handleRejectBRS = async (matchId) => {
-                setActionMsg('');
-                try {
-                    await apiFetch(`/v1/reconciliation/matches/${matchId}/reject`, { method: 'POST' });
-                    setBrsMatches(prev => prev.filter(m => m.match_id !== matchId));
-                    setActionMsg('BRS match candidate rejected successfully.');
-                } catch (err) {
-                    alert(`Failed to reject BRS match: ${err.message}`);
-                }
-            };
+            const fmt = (v) => window.money(v);
+            const dupTotal = dedupMatches.reduce((s, m) => {
+                const d = (m.rows || []).find(r => r.role === 'duplicate');
+                return s + (d ? (d.amount || 0) : 0);
+            }, 0);
+            const differentRefs = dedupMatches.filter(m => {
+                const [a, b] = m.rows || [];
+                return a && b && a.reference_no && b.reference_no && a.reference_no !== b.reference_no;
+            }).length;
+            const tierCount = (t) => brsMatches.filter(m => m.tier === t).length;
+            const brsAccounts = new Set(brsMatches.map(m => m.account_id)).size;
 
             return (
                 <div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.65rem', marginBottom: '1rem' }}>
-                        <div>
-                            <h2 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '0.25rem' }}>Review Queue</h2>
-                            <p style={{ color: 'var(--gray-600)', fontSize: '0.54rem' }}>
-                                Human-in-the-loop review for transactions the classifier could not decide, ambiguous duplicates, and BRS match candidates.
-                            </p>
-                        </div>
-                        <button className="btn btn-sm" onClick={loadQueueData} disabled={loading}>
-                             Refresh Queue
-                        </button>
-                    </div>
+                    <PageHeader
+                        title="Review Queue"
+                        subtitle="Human-in-the-loop review for transactions the classifier could not decide, ambiguous duplicates, and BRS match candidates."
+                        actions={<button className="btn btn-sm" onClick={loadQueueData} disabled={loading}>Refresh Queue</button>} />
 
-                    {actionMsg && (
-                        <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', color: '#065f46', padding: '0.75rem 1rem', borderRadius: '4px', marginBottom: '1.5rem', fontSize: '0.54rem' }}>
-                             {actionMsg}
-                        </div>
-                    )}
-
-                    {error && (
-                        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '0.75rem 1rem', borderRadius: '4px', marginBottom: '1.5rem', fontSize: '0.54rem' }}>
-                             {error}
-                        </div>
-                    )}
-
-                    {/* Navigation Tabs */}
-                    <div style={{ display: 'flex', borderBottom: '1px solid var(--gray-300)', marginBottom: '1.5rem' }}>
-                        <button
-                            style={{
-                                padding: '0.75rem 1.25rem',
-                                border: 'none',
-                                background: 'none',
-                                borderBottom: activeTab === 'categorization' ? '2px solid var(--primary-color)' : 'none',
-                                fontWeight: activeTab === 'categorization' ? 'bold' : 'normal',
-                                color: activeTab === 'categorization' ? 'var(--primary-color)' : 'var(--gray-600)',
-                                cursor: 'pointer',
-                                fontSize: '0.57rem'
-                            }}
-                            onClick={() => setActiveTab('categorization')}
-                        >
+                    <div className="page-tabs">
+                        <button className={`page-tab ${activeTab === 'categorization' ? 'active' : ''}`} onClick={() => setActiveTab('categorization')}>
                             Manual Review ({catCount})
                         </button>
-                        <button
-                            style={{
-                                padding: '0.75rem 1.25rem',
-                                border: 'none',
-                                background: 'none',
-                                borderBottom: activeTab === 'dedup' ? '2px solid var(--primary-color)' : 'none',
-                                fontWeight: activeTab === 'dedup' ? 'bold' : 'normal',
-                                color: activeTab === 'dedup' ? 'var(--primary-color)' : 'var(--gray-600)',
-                                cursor: 'pointer',
-                                fontSize: '0.57rem'
-                            }}
-                            onClick={() => setActiveTab('dedup')}
-                        >
+                        <button className={`page-tab ${activeTab === 'dedup' ? 'active' : ''}`} onClick={() => setActiveTab('dedup')}>
                             Cross-Source Duplicates ({dedupMatches.length})
                         </button>
-                        <button
-                            style={{
-                                padding: '0.75rem 1.25rem',
-                                border: 'none',
-                                background: 'none',
-                                borderBottom: activeTab === 'brs' ? '2px solid var(--primary-color)' : 'none',
-                                fontWeight: activeTab === 'brs' ? 'bold' : 'normal',
-                                color: activeTab === 'brs' ? 'var(--primary-color)' : 'var(--gray-600)',
-                                cursor: 'pointer',
-                                fontSize: '0.57rem'
-                            }}
-                            onClick={() => setActiveTab('brs')}
-                        >
+                        <button className={`page-tab ${activeTab === 'brs' ? 'active' : ''}`} onClick={() => setActiveTab('brs')}>
                             BRS Match Candidates ({brsMatches.length})
                         </button>
                     </div>
 
                     {activeTab === 'categorization' ? (
                         <CategorizationReviewTab onCountChange={setCatCount} />
-                    ) : loading ? (
-                        <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--gray-600)' }}>
-                            Loading review queue items...
-                        </div>
                     ) : activeTab === 'dedup' ? (
-                        dedupMatches.length === 0 ? (
-                            <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--gray-600)' }}>
-                                 Clear! No cross-source duplicate matches currently pending review.
-                            </div>
-                        ) : (
-                            <div className="card" style={{ overflowX: 'auto' }}>
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <th>Match Details</th>
-                                            <th>Duplicate Candidate (Alert/Txn)</th>
-                                            <th>Canonical Transaction (Kept)</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {dedupMatches.map(m => (
-                                            <tr key={m.id}>
-                                                <td>
-                                                    <span className="badge" style={{ background: '#fffbebf', color: '#b45309', border: '1px solid #fcd34d', marginBottom: '0.25rem', display: 'inline-block' }}>
-                                                        {m.tier}
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    {m.duplicate_txn ? (
-                                                        <div>
-                                                            <div style={{ fontWeight: '600' }}>{m.duplicate_txn.narration}</div>
-                                                            <div style={{ fontSize: '0.48rem', color: 'var(--gray-600)' }}>
-                                                                Source: <span className="badge">{m.duplicate_txn.source_type}</span> | Date: {m.duplicate_txn.txn_date}
-                                                            </div>
-                                                            <div style={{ fontSize: '0.48rem', color: 'var(--gray-600)' }}>
-                                                                Amount: ₹{((m.duplicate_txn.amount_paise || 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })} | Ref: {m.duplicate_txn.reference_no || 'None'}
-                                                            </div>
-                                                        </div>
-                                                    ) : <span>Transaction ID: {m.duplicate_txn_id}</span>}
-                                                </td>
-                                                <td>
-                                                    {m.kept_txn ? (
-                                                        <div>
-                                                            <div style={{ fontWeight: '600' }}>{m.kept_txn.narration}</div>
-                                                            <div style={{ fontSize: '0.48rem', color: 'var(--gray-600)' }}>
-                                                                Source: <span className="badge">{m.kept_txn.source_type}</span> | Date: {m.kept_txn.txn_date}
-                                                            </div>
-                                                            <div style={{ fontSize: '0.48rem', color: 'var(--gray-600)' }}>
-                                                                Amount: ₹{((m.kept_txn.amount_paise || 0) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })} | Ref: {m.kept_txn.reference_no || 'None'}
-                                                            </div>
-                                                        </div>
-                                                    ) : <span>Transaction ID: {m.kept_txn_id}</span>}
-                                                </td>
-                                                <td>
-                                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                                        <button className="btn btn-sm btn-primary" onClick={() => handleConfirmDedup(m.id)}>
-                                                            Confirm Duplicate
-                                                        </button>
-                                                        <button className="btn btn-sm" onClick={() => handleRejectDedup(m.id)}>
-                                                            Reject (Keep Distinct)
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )
+                        <PairReviewTab
+                            loading={loading}
+                            error={dedupError}
+                            msg={dedupMsg}
+                            tiles={[
+                                { label: 'Awaiting review', value: dedupMatches.length },
+                                { label: 'Removed from totals if confirmed', value: fmt(dupTotal) },
+                                { label: 'Different references', value: differentRefs, warn: differentRefs > 0 },
+                            ]}
+                            note="Each pair is one transaction seen twice (for example in the statement and in an email alert) — or two real transactions that look alike. Confirm removes the copy from every total; Keep both counts both."
+                            matches={dedupMatches}
+                            keyOf={m => m.id}
+                            roleOf={row => row.role === 'duplicate'
+                                ? { text: `possible copy · ${SOURCE_LABEL[row.source_type] || row.source_type || ''}`, color: '#b45309', strong: true,
+                                    title: row.reference_no ? `Ref ${row.reference_no}` : '' }
+                                : { text: `kept · ${SOURCE_LABEL[row.source_type] || row.source_type || ''}`,
+                                    title: row.reference_no ? `Ref ${row.reference_no}` : '' }}
+                            detailOf={m => {
+                                const [a, b] = m.rows || [];
+                                const refs = a && b && a.reference_no && b.reference_no && a.reference_no !== b.reference_no
+                                    ? ' · references differ' : '';
+                                return `Match confidence ${Math.round((m.confidence || 0) * 100)}%${refs}`;
+                            }}
+                            decisionHeader="Is it a duplicate?"
+                            confirmLabel="Duplicate"
+                            rejectLabel="Keep both"
+                            onConfirm={dedupDecide('confirm')}
+                            onReject={dedupDecide('reject')}
+                            emptyText="Clear! No cross-source duplicate matches currently pending review." />
                     ) : (
-                        brsMatches.length === 0 ? (
-                            <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--gray-600)' }}>
-                                 Clear! No BRS match candidates currently pending review.
-                            </div>
-                        ) : (
-                            <div className="card" style={{ overflowX: 'auto' }}>
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <th>Tier</th>
-                                            <th>Reason</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {brsMatches.map(m => (
-                                            <tr key={m.match_id}>
-                                                <td><span className="badge">{m.tier}</span></td>
-                                                <td>{m.reason}</td>
-                                                <td>
-                                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                                        <button className="btn btn-sm btn-primary" onClick={() => handleConfirmBRS(m.match_id)}>
-                                                            Confirm Match
-                                                        </button>
-                                                        <button className="btn btn-sm" onClick={() => handleRejectBRS(m.match_id)}>
-                                                            Reject
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )
+                        <PairReviewTab
+                            loading={loading}
+                            error={brsError}
+                            msg={brsMsg}
+                            tiles={[
+                                { label: 'Awaiting review', value: brsMatches.length },
+                                { label: 'Same ID, amount differs', value: tierCount('amount_difference'), warn: tierCount('amount_difference') > 0 },
+                                { label: 'Several entries make one', value: tierCount('tier_3_group') },
+                                { label: 'Suggested pairs', value: tierCount('suggested') },
+                            ]}
+                            note={`Pairs the reconciliation could not settle on its own, from the latest BRS of ${brsAccounts || 'each'} account${brsAccounts === 1 ? '' : 's'}. Confirm to match them; Reject to keep them open on the BRS. The BRS is recalculated after each decision.`}
+                            matches={brsMatches}
+                            keyOf={m => m.match_id}
+                            roleOf={row => row.side === 'books'
+                                ? { text: 'in books', strong: true, title: [row.voucher_type, row.reference_no && `Ref ${row.reference_no}`].filter(Boolean).join(' · ') }
+                                : { text: 'in bank', strong: true, color: 'var(--primary-color)', title: row.reference_no ? `Ref ${row.reference_no}` : '' }}
+                            detailOf={m => (
+                                /* One short line, so a pair stays as compact as a
+                                   Manual Review row; the engine's full reason and
+                                   the period are on hover. */
+                                <span title={[m.reason, m.period_from && `${m.period_from} to ${m.period_to}`].filter(Boolean).join(' · ')}>
+                                    <span style={{ fontWeight: '600' }}>{BRS_TIER_LABEL[m.tier] || m.tier}</span>
+                                    {m.difference ? ` · differs by ${fmt(Math.abs(m.difference))}` : ''}
+                                    {brsAccounts > 1 && m.account_name ? ` · ${m.account_name}` : ''}
+                                </span>
+                            )}
+                            decisionHeader="Do these match?"
+                            confirmLabel="Confirm match"
+                            rejectLabel="Reject"
+                            onConfirm={brsDecide('confirm')}
+                            onReject={brsDecide('reject')}
+                            emptyText="Clear! No BRS match candidates currently pending review." />
                     )}
                 </div>
             );
@@ -7587,7 +7755,10 @@
 
             return (
                 <div>
-                    {msg && <div style={{ padding: '0.75rem', background: 'var(--gray-100)', marginBottom: '1rem', fontWeight: 'bold' }}>{msg}</div>}
+                    <PageHeader
+                        title="Bank Master"
+                        subtitle="Business entities and the bank accounts that belong to them. Every statement, report and reconciliation is filed against an account here." />
+                    <Banner kind={/error|fail/i.test(msg) ? 'error' : 'ok'}>{(msg || '').trim()}</Banner>
 
                     {/* Entities Section */}
                     <div className="card" style={{ marginBottom: '1.5rem' }}>
@@ -7603,7 +7774,7 @@
                                     onChange={e => setNewEntityName(e.target.value)}
                                     style={{ flex: 1 }}
                                 />
-                                <button type="submit" className="btn btn-primary">Add Entity</button>
+                                <button type="submit" className="btn btn-sm btn-primary">Add Entity</button>
                             </form>
 
                             {entities.length === 0 ? (
@@ -7645,7 +7816,7 @@
                         <div className="card-body">
                             <form onSubmit={handleCreateAccount} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '1rem', alignItems: 'end' }}>
                                 <div>
-                                    <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.51rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}>Entity</label>
+                                    <label className="field-label">Entity</label>
                                     <select value={newAccEntityId} onChange={e => setNewAccEntityId(e.target.value)} style={{ width: '100%' }}>
                                         <option value="">-- Select Entity --</option>
                                         {entities.map(ent => (
@@ -7655,7 +7826,7 @@
                                 </div>
 
                                 <div>
-                                    <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.51rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}>Bank</label>
+                                    <label className="field-label">Bank</label>
                                     <select value={newAccBankId} onChange={e => setNewAccBankId(e.target.value)} style={{ width: '100%' }}>
                                         <option value="">-- Select Bank --</option>
                                         {banks.map(b => (
@@ -7665,7 +7836,7 @@
                                 </div>
 
                                 <div>
-                                    <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.51rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}>Account Type</label>
+                                    <label className="field-label">Account Type</label>
                                     <select value={newAccType} onChange={e => setNewAccType(e.target.value)} style={{ width: '100%' }}>
                                         <option value="CURRENT">CURRENT</option>
                                         <option value="SAVINGS">SAVINGS</option>
@@ -7675,7 +7846,7 @@
                                 </div>
 
                                 <div>
-                                    <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.51rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}>Account Number (12 Digits)</label>
+                                    <label className="field-label">Account Number (12 Digits)</label>
                                     <input
                                         type="text"
                                         placeholder="e.g. 502000123456"
@@ -7687,7 +7858,7 @@
                                 </div>
 
                                 <div>
-                                    <label style={{ display: 'block', marginBottom: '0.4rem', fontSize: '0.51rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}>Currency</label>
+                                    <label className="field-label">Currency</label>
                                     <input
                                         type="text"
                                         value={newAccCurrency}
@@ -7697,7 +7868,7 @@
                                 </div>
 
                                 <div>
-                                    <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Add Bank Account</button>
+                                    <button type="submit" className="btn btn-sm btn-primary">Add Bank Account</button>
                                 </div>
                             </form>
                         </div>
@@ -7807,7 +7978,13 @@
 
         // --- Reports & Treasury Overview Component ---
         function ReportsView() {
-            const { selectedEntityId, selectedBankId, fromDate, toDate } = React.useContext(FilterContext);
+            // Entity and account come from the shared filter, and are SHOWN on this
+            // page's own bar below so they can be seen and changed here. The
+            // shared From/To dates are deliberately not used: this page has its
+            // own Period control, and quietly applying the dashboard's dates
+            // made "Current Month" in the dropdown show some other range.
+            const { selectedEntityId, selectedBankId, setSelectedEntityId, setSelectedBankId,
+                    entities: allEntities = [], accounts: allAccounts = [] } = React.useContext(FilterContext);
             const [activeTab, setActiveTab] = useState('treasury');
             const [startDate, setStartDate] = useState('');
             const [endDate, setEndDate] = useState('');
@@ -7849,8 +8026,8 @@
             // period would request without issuing it.
             const buildTreasuryUrl = (period) => {
                 let url = '/reports/treasury?';
-                const effStart = startDate || fromDate;
-                const effEnd = endDate || toDate;
+                const effStart = startDate;
+                const effEnd = endDate;
                 // Explicit dates win over the preset, server-side too: someone
                 // who typed a range meant that range.
                 url += `period=${(effStart || effEnd) ? 'custom' : period}&`;
@@ -7917,14 +8094,14 @@
                 if (activeTab !== 'treasury') return;
                 if (served && served === buildTreasuryUrl(reportPeriod)) return;
                 loadTreasury();
-            }, [activeTab, selectedEntityId, selectedBankId, fromDate, toDate, startDate, endDate, reportPeriod]);
+            }, [activeTab, selectedEntityId, selectedBankId, startDate, endDate, reportPeriod]);
 
             const handleExportTreasury = async () => {
                 try {
                     setExporting(true);
                     setExportError('');
-                    const effStart = startDate || fromDate;
-                    const effEnd = endDate || toDate;
+                    const effStart = startDate;
+                    const effEnd = endDate;
                     let url = '/reports/export/treasury?';
                     // The export must be the period on screen, or the file and the
                     // page quietly disagree.
@@ -7948,8 +8125,11 @@
                     let url = `/reports/export/${type}?`;
                     if (selectedEntityId) url += `entity_id=${selectedEntityId}&`;
                     if (selectedBankId) url += `account_id=${selectedBankId}&`;
-                    if (fromDate) url += `start_date=${fromDate}&`;
-                    if (toDate) url += `end_date=${toDate}&`;
+                    // The period the report on screen resolved to, so the file
+                    // holds the same transactions the page is describing.
+                    const per = (treasuryData && treasuryData.period) || {};
+                    if (per.start_date) url += `start_date=${per.start_date}&`;
+                    if (per.end_date) url += `end_date=${per.end_date}&`;
                     const ext = type === 'excel' ? 'xlsx' : type;
                     await apiDownload(url, `transactions_report.${ext}`);
                 } catch (err) {
@@ -7989,56 +8169,27 @@
                identical markup on those pages. */
             return (
                 <div className="reports-page">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.65rem', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
-                        <div>
-                            <h2 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '0.25rem' }}>Reports &amp; Treasury Intelligence</h2>
-                            <p style={{ color: 'var(--gray-600)', fontSize: '0.54rem' }}>
-                                Executive Group &amp; Entity Level Liquidity, Cash Flow, Minimum Balance Breaches &amp; Export.
-                            </p>
-                        </div>
-                        {activeTab === 'treasury' && (
-                            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                                <button className="btn btn-sm" onClick={loadTreasury} disabled={loading}>
-                                     Refresh Report
+                    <PageHeader
+                        title="Reports & Treasury Intelligence"
+                        subtitle="Executive Group & Entity Level Liquidity, Cash Flow, Minimum Balance Breaches & Export."
+                        actions={activeTab === 'treasury' && (
+                            <>
+                                <button className="btn btn-sm" onClick={loadTreasury} disabled={loading}>Refresh Report</button>
+                                <button onClick={handleExportTreasury} disabled={exporting} className="btn btn-sm btn-primary">
+                                    {exporting ? 'Exporting...' : 'Export Treasury CSV'}
                                 </button>
-                                <button
-                                    onClick={handleExportTreasury}
-                                    disabled={exporting}
-                                    className="btn btn-sm btn-primary"
-                                >
-                                     {exporting ? 'Exporting...' : 'Export Treasury CSV'}
-                                </button>
-                            </div>
-                        )}
-                    </div>
+                            </>
+                        )} />
 
-                    {exportError && (
-                        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '0.75rem 1rem', borderRadius: '4px', marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span>⚠️ {exportError}</span>
-                            <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontWeight: 'bold', color: '#991b1b' }} onClick={() => setExportError('')}>✕</button>
-                        </div>
-                    )}
+                    {exportError && <Banner kind="error" onClose={() => setExportError('')}>{exportError}</Banner>}
 
                     {/* Sub Navigation Tabs */}
-                    <div style={{ display: 'flex', borderBottom: '1px solid var(--gray-300)', marginBottom: '1.5rem' }}>
+                    <div className="page-tabs">
                         {[
                             { key: 'treasury', label: 'Treasury Overview (Group Level)' },
                             { key: 'csv', label: 'Export Transactions (CSV / Excel / PDF)' }
                         ].map(t => (
-                            <button
-                                key={t.key}
-                                style={{
-                                    padding: '0.75rem 1.25rem',
-                                    border: 'none',
-                                    background: 'none',
-                                    borderBottom: activeTab === t.key ? '2px solid var(--primary-color)' : 'none',
-                                    fontWeight: activeTab === t.key ? 'bold' : 'normal',
-                                    color: activeTab === t.key ? 'var(--primary-color)' : 'var(--gray-600)',
-                                    cursor: 'pointer',
-                                    fontSize: '0.57rem'
-                                }}
-                                onClick={() => setActiveTab(t.key)}
-                            >
+                            <button key={t.key} className={`page-tab ${activeTab === t.key ? 'active' : ''}`} onClick={() => setActiveTab(t.key)}>
                                 {t.label}
                             </button>
                         ))}
@@ -8060,6 +8211,28 @@
                                 but it belongs inline at the end of the bar, not in a
                                 column of its own. */}
                             <div className="topbar reports-filter">
+                                <div className="topbar-group">
+                                    <label>Entity:</label>
+                                    <select value={selectedEntityId} onChange={e => {
+                                        const v = e.target.value;
+                                        setSelectedEntityId(v);
+                                        if (v && !allAccounts.some(a => a.id === selectedBankId && a.entity_id === v)) setSelectedBankId('');
+                                    }}>
+                                        <option value="">All Entities ({allEntities.length})</option>
+                                        {allEntities.map(ent => <option key={ent.id} value={ent.id}>{ent.name}</option>)}
+                                    </select>
+                                </div>
+                                <div className="topbar-group">
+                                    <label>Account:</label>
+                                    <select value={selectedBankId} onChange={e => setSelectedBankId(e.target.value)}>
+                                        <option value="">All Accounts</option>
+                                        {allAccounts.filter(a => !selectedEntityId || a.entity_id === selectedEntityId).map(acc => (
+                                            <option key={acc.id} value={acc.id}>
+                                                {acc.bank_name || acc.bank_code} ({acc.account_number_masked})
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
                                 <div className="topbar-group">
                                     <label>Period:</label>
                                     <select value={(startDate || endDate) ? 'custom' : reportPeriod}
@@ -8878,24 +9051,13 @@
             };
 
             return (
-                <div style={{ padding: '0.25rem 0' }}>
-                    <div style={{ marginBottom: '1.5rem' }}>
-                        <h2 style={{ fontSize: '0.9rem', fontWeight: 'bold', marginBottom: '0.25rem' }}>Settings & System Preferences</h2>
-                        <p style={{ color: 'var(--gray-600)', fontSize: '0.54rem' }}>
-                            Configure automated email distribution schedules, default currency formatting, and date display options.
-                        </p>
-                    </div>
+                <div>
+                    <PageHeader
+                        title="Settings & System Preferences"
+                        subtitle="Configure automated email distribution schedules, default currency formatting, and date display options." />
 
-                    {scheduleMsg && (
-                        <div style={{ padding: '0.75rem 1rem', background: '#dcfce7', color: '#15803d', border: '1px solid #bbf7d0', borderRadius: '4px', marginBottom: '1.25rem', fontSize: '0.528rem', fontWeight: '600' }}>
-                            {scheduleMsg}
-                        </div>
-                    )}
-                    {scheduleError && (
-                        <div style={{ padding: '0.75rem 1rem', background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', borderRadius: '4px', marginBottom: '1.25rem', fontSize: '0.528rem', fontWeight: '600' }}>
-                            {scheduleError}
-                        </div>
-                    )}
+                    <Banner kind="ok">{scheduleMsg}</Banner>
+                    <Banner kind="error">{scheduleError}</Banner>
 
                     {/* Exchange rates. Placed above the schedules because a wrong
                         rate silently changes numbers on another screen, which is
@@ -9018,7 +9180,7 @@
                                 </div>
                             )}
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.85rem' }}>
-                                <label style={{ fontSize: '0.5rem', fontWeight: 'bold' }}>Rates apply from:</label>
+                                <label className="field-label" style={{ marginBottom: 0 }}>Rates apply from</label>
                                 <input type="date" value={fxDate} onChange={e => setFxDate(e.target.value)}
                                        style={{ fontSize: '0.5rem', padding: '0.3rem 0.45rem', borderRadius: '4px' }} />
                                 <span style={{ fontSize: '0.46rem', color: 'var(--gray-600)' }}>
@@ -9822,10 +9984,10 @@
             useEffect(() => {
                 /* Kept in step with the identical list in the <head> script,
                    which sets the scale before first paint. */
-                const UNSCALED = ['/', '/home', '/pricing', '/contact', '/login',
-                                  '/reports', '/ingestion', '/reconciliation'];
+                const UNSCALED = ['/', '/home', '/pricing', '/contact', '/login'];
                 const unscaled = UNSCALED.includes(currentPath);
-                const isDashboard = currentPath === '/dashboard' || currentPath === '/dashboard-ui';
+                // One scale for every signed-in page (see the <head> script).
+                const isDashboard = false;
                 [document.documentElement, document.body].forEach(el => {
                     el.classList.toggle('app-dashboard', !unscaled && isDashboard);
                     el.classList.toggle('app-inner', !unscaled && !isDashboard);

@@ -176,6 +176,7 @@ def test_full_api_reconciliation_pipeline_integration(client: TestClient):
         "period_from": "2025-03-01",
         "period_to": "2025-03-30",
         "import_batch_id": str(batch_id),
+        "book_opening": "0",
         "force": True
     })
     assert run_res.status_code == 200
@@ -217,78 +218,46 @@ def test_full_api_reconciliation_pipeline_integration(client: TestClient):
     assert len(amount_mismatches) == 1
     assert amount_mismatches[0]["bank_amount"] == 12460.0, f"Expected Bank Amount 12460.0 but got {amount_mismatches[0]['bank_amount']}"
     assert amount_mismatches[0]["ledger_amount"] == 12400.0, f"Expected Ledger Amount 12400.0 but got {amount_mismatches[0]['ledger_amount']}"
-    assert amount_mismatches[0]["ledger_transaction_id"] not in timing_book_ids
-    assert amount_mismatches[0]["bank_transaction_id"] not in timing_bank_ids
+    # (both ids reappear only on the amount_difference line checked below)
 
-    # Assert DUPLICATE: Amount MUST match canonical match exactly!
-    duplicates = [d for d in debug_log if d["match_status"] == "DUPLICATE"]
-    assert len(duplicates) == 1
-    dup = duplicates[0]
-    assert dup["bank_amount"] == dup["ledger_amount"] == 13511.0
-    # Duplicate ledger entries MUST appear in BRS timing_items as a SUBTRACT adjustment
-    # (they inflate books so the bridge must subtract them).
-    assert dup["ledger_transaction_id"] in timing_book_ids, (
-        "Duplicate ledger credit must be in BRS items (SUBTRACT direction) to correct the bridge"
-    )
-    dup_brs = next(it for it in timing_items if it["book_entry_id"] == dup["ledger_transaction_id"])
-    assert dup_brs["direction"] == "subtract", "Duplicate ledger credit BRS item must have direction=subtract"
-    assert dup_brs["category"] == "duplicate_ledger_credit"
+    # The ₹60 difference is its own BRS line, so the bridge still adds up.
+    diff_items = [it for it in timing_items if it["category"] == "amount_difference"]
+    assert len(diff_items) == 1
+    assert diff_items[0]["amount_paise"] == 6000 and diff_items[0]["direction"] == "add"
 
-    # Hard Regression Assert: Bank ₹51,931 (14-Mar) MUST NEVER be marked as DUPLICATE against Ledger ₹12,400!
-    for d in duplicates:
+    # DUPLICATE: the second ₹13,511 ledger row is kept and listed for review
+    # (SUBTRACT: it inflates the books), never deleted.
+    dup_items = [it for it in timing_items if it["category"] == "duplicate_ledger_credit"]
+    assert len(dup_items) == 1
+    assert dup_items[0]["amount_paise"] == 1351100
+    assert dup_items[0]["direction"] == "subtract"
+    assert dup_items[0]["exception_reason"] == "possible_duplicate_ledger_row"
+    assert report["duplicate_count"] == 1
+
+    # Hard regression: bank ₹51,931 (14-Mar) must never pair with ledger ₹12,400.
+    for d in debug_log:
         assert not (d["bank_amount"] == 51931.0 and d["ledger_amount"] == 12400.0)
 
-    # Assert LEDGER_ONLY (exclude duplicate BRS items which also have side=book)
-    DUPLICATE_CATEGORIES = {"duplicate_ledger_credit", "duplicate_ledger_debit"}
-    ledger_only_items = [
-        it for it in timing_items
-        if it["side"] == "book" and it.get("category") not in DUPLICATE_CATEGORIES
-    ]
+    # LEDGER_ONLY (office rent) and BANK_ONLY (the charge)
+    ledger_only_items = [it for it in timing_items if it["side"] == "book"
+                         and it["category"] in ("unpresented_cheque", "uncleared_deposit")]
     assert len(ledger_only_items) == 1
-
-    # Assert BANK_ONLY
     bank_only_items = [it for it in timing_items if it["side"] == "bank"]
     assert len(bank_only_items) == 1
     assert bank_only_items[0]["category"] in ["bank_charge", "UNMATCHED_BANK_TRANSACTION"]
 
-    # Hard Mathematical Invariants:
-    # 1. Total In-Scope Bank Transactions = EXACT_MATCH + DATE_MISMATCH + AMOUNT_MISMATCH + GROUP_MATCH + BANK_ONLY
-    # 2. Total In-Scope Ledger Transactions = EXACT_MATCH + DATE_MISMATCH + AMOUNT_MISMATCH + GROUP_MATCH + LEDGER_ONLY + DUPLICATE
-    n_bank = len(bank_data)
-    n_book = len(ledger_rows)
-
-    n_exact = len(exact_matches)
-    n_date_mis = len(date_mismatches)
-    n_amt_mis = len(amount_mismatches)
-    n_group = 0
-    n_bank_only = len(bank_only_items)
-    n_ledger_only = len(ledger_only_items)
-    n_duplicates = len(duplicates)
-
-    assert (n_exact + n_date_mis + n_amt_mis + n_group + n_bank_only) == n_bank, (
-        f"Bank bucket sum mismatch: {n_exact}+{n_date_mis}+{n_amt_mis}+{n_group}+{n_bank_only} != {n_bank}"
-    )
-    assert (n_exact + n_date_mis + n_amt_mis + n_group + n_ledger_only + n_duplicates) == n_book, (
-        f"Book bucket sum mismatch: {n_exact}+{n_date_mis}+{n_amt_mis}+{n_group}+{n_ledger_only}+{n_duplicates} != {n_book}"
-    )
-
-    # Assert Single-Bucket Invariant: No transaction present in multiple buckets.
-    # Exception: DUPLICATE entries are intentionally dual-tracked — they appear in
-    # debug_log (as a DUPLICATE classification) AND in timing_items (as a SUBTRACT
-    # BRS adjustment).  Exclude them from the uniqueness check for debug_log.
-    duplicate_book_ids_set = {d["ledger_transaction_id"] for d in debug_log if d["match_status"] == "DUPLICATE"}
-    all_classified_book_ids = set()
-    for d in debug_log:
-        if d.get("ledger_transaction_id") and d["match_status"] != "DUPLICATE":
-            l_id = d["ledger_transaction_id"]
-            assert l_id not in all_classified_book_ids, f"Book ID {l_id} appears in multiple buckets!"
-            all_classified_book_ids.add(l_id)
-
-    for it in timing_items:
-        if it.get("book_entry_id"):
-            b_id = it["book_entry_id"]
-            # Duplicate BRS items legitimately appear in both debug_log and timing_items
-            if b_id in duplicate_book_ids_set:
-                continue
-            assert b_id not in all_classified_book_ids, f"Timing Book ID {b_id} appears in multiple buckets!"
-            all_classified_book_ids.add(b_id)
+    # Every entry lands in exactly one bucket.
+    n_bank, n_book = len(bank_data), len(ledger_rows)
+    pairs = [d for d in debug_log if d["status"] != "rejected"]
+    paired_bank = [i for d in pairs for i in d["bank_transaction_ids"]]
+    paired_book = [i for d in pairs for i in d["ledger_transaction_ids"]]
+    assert len(paired_bank) == len(set(paired_bank))
+    assert len(paired_book) == len(set(paired_book))
+    item_book = [it["book_entry_id"] for it in timing_items
+                 if it["book_entry_id"] and it["category"] != "amount_difference"]
+    item_bank = [it["bank_txn_id"] for it in timing_items
+                 if it["bank_txn_id"] and it["category"] != "amount_difference"]
+    assert not set(item_book) & set(paired_book)
+    assert not set(item_bank) & set(paired_bank)
+    assert len(paired_bank) + len(item_bank) == n_bank
+    assert len(paired_book) + len(item_book) == n_book

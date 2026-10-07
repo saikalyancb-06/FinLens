@@ -2437,3 +2437,80 @@ body.app-inner .txn-workbench th {
 @media (max-width: 1000px) {
     .reports-range { margin-left: 0; width: 100%; }
 }
+
+/* ===================================================================
+   ONE LOOK FOR EVERY SIGNED-IN PAGE (2026-10-07)
+   ===================================================================
+   Every signed-in page now uses the same type scale (html.app-inner), and
+   the same kind of thing is the same size on every tab: page title, card
+   heading, stat tile, banner, form control, table. Pages build these from
+   the shared components in index.html (PageHeader, StatTiles, Banner) and
+   these classes; this block comes last and wins over the older per-page
+   tweaks (`.reports-page`, the dense-dashboard card rules) on purpose.
+   `!important` only where those older rules or inline styles set a size. */
+
+body.app-inner .page-header {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 0.75rem; margin: 0.65rem 0 1rem;
+}
+body.app-inner .page-title { font-size: 0.9rem; font-weight: 700; margin: 0 0 0.25rem; }
+body.app-inner .page-subtitle { font-size: 0.54rem; color: var(--gray-600); margin: 0; }
+body.app-inner .page-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+
+/* Card headings: one size everywhere (Bank Master, Settings, Reports,
+   Ingestion, Reconciliation, Transactions, Categories, Dashboard). */
+body.app-inner .card-header h3 {
+    font-size: 0.66rem !important; margin: 0; text-transform: uppercase; letter-spacing: 0.5px;
+}
+body.app-inner .card-subtitle {
+    font-size: 0.48rem; color: var(--gray-600); margin-top: 0.15rem;
+    text-transform: none; letter-spacing: 0;
+}
+
+/* Stat tiles: Review Queue, Reports, Ingestion, Email Pickup, RPA. */
+body.app-inner .stats-grid {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)) !important;
+    gap: 0.75rem !important; margin-bottom: 0.9rem !important;
+}
+body.app-inner .stat-card { padding: 0.6rem 0.9rem !important; margin-bottom: 0 !important; }
+body.app-inner .stat-label { font-size: 0.45rem !important; margin-bottom: 0.2rem !important; }
+body.app-inner .stat-value { font-size: 0.8rem !important; line-height: 1.25; }
+body.app-inner .stat-change { font-size: 0.42rem !important; margin-top: 0.15rem !important; }
+
+/* Banners: success / error / warning / information. */
+.banner {
+    padding: 0.6rem 0.9rem; border-radius: 4px; margin-bottom: 1rem;
+    font-size: 0.54rem; border: 1px solid; display: flex; align-items: center;
+    gap: 0.75rem; flex-wrap: wrap;
+}
+.banner > .banner-text { flex: 1 1 280px; }
+.banner-ok    { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+.banner-error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+.banner-warn  { background: #fffbeb; border-color: #fde68a; color: #78350f; }
+.banner-info  { background: #eff6ff; border-color: #bfdbfe; color: #1e3a8a; }
+
+/* Form fields in page content: the same size on every page. Inside table
+   cells the compact table rule above still applies. */
+body.app-inner .content .card-body input:not([type=checkbox]):not([type=radio]):not([type=file]),
+body.app-inner .content .card-body select,
+body.app-inner .content .card-body textarea {
+    font-size: 0.5rem; padding: 0.3rem 0.5rem; min-height: 0; height: auto;
+}
+body.app-inner .field-label {
+    display: block; margin-bottom: 0.3rem; font-size: 0.45rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px; color: var(--gray-800); white-space: nowrap;
+}
+
+/* Section tabs under a page title (Review Queue, Reports). */
+body.app-inner .page-tabs { display: flex; border-bottom: 1px solid var(--gray-300); margin-bottom: 1.25rem; flex-wrap: wrap; }
+body.app-inner .page-tab {
+    padding: 0.6rem 1.1rem; border: none; background: none; cursor: pointer;
+    font-size: 0.57rem; color: var(--gray-600); border-bottom: 2px solid transparent;
+}
+body.app-inner .page-tab.active { color: var(--primary-color); font-weight: 700; border-bottom-color: var(--primary-color); }
+
+/* Dashboard KPI tiles follow the stat-tile sizes; a long label wraps
+   instead of being cut to "CLOSING POSIT…". */
+body.app-inner .ops-label { font-size: 0.45rem; white-space: normal; overflow: visible; }
+
+body.app-inner .ops-sub { font-size: 0.42rem; }

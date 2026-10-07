@@ -38,7 +38,12 @@ class ImportBatch(Base):
     row_count = Column(Integer, nullable=False, default=0)
     period_from = Column(Date, nullable=True)
     period_to = Column(Date, nullable=True)
-    book_opening_paise = Column(BigInteger, nullable=False, default=0)
+    # Book balance at the start of the file, when known: typed by the user on
+    # the import screen (source "manual") or read from the file's own
+    # "Opening Balance" row (source "ledger_file"). NULL means not supplied —
+    # zero is a real balance and must not be confused with "missing".
+    book_opening_paise = Column(BigInteger, nullable=True)
+    book_opening_source = Column(String(20), nullable=True)
     book_closing_paise = Column(BigInteger, nullable=False, default=0)
     imported_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -116,6 +121,10 @@ class ReconciliationRun(Base):
     period_to = Column(Date, nullable=False)
     
     book_opening_paise = Column(BigInteger, nullable=False, default=0)
+    # Where book_opening_paise came from: manual | previous_run | ledger_file.
+    book_opening_source = Column(String(20), nullable=True)
+    # The run whose outstanding items were carried into this one.
+    carried_from_run_id = Column(UUID(as_uuid=True), ForeignKey("reconciliation_runs.id", ondelete="SET NULL"), nullable=True)
     book_closing_paise = Column(BigInteger, nullable=False, default=0)
     bank_opening_paise = Column(BigInteger, nullable=False, default=0)
     bank_closing_paise = Column(BigInteger, nullable=False, default=0)
@@ -144,6 +153,7 @@ class ReconciliationRun(Base):
     account = relationship("Account")
     import_batch = relationship("ImportBatch")
     superseded_run = relationship("ReconciliationRun", remote_side=[id], foreign_keys=[supersedes_run_id])
+    carried_from_run = relationship("ReconciliationRun", remote_side=[id], foreign_keys=[carried_from_run_id])
     matches = relationship("ReconciliationMatch", back_populates="run", cascade="all, delete-orphan")
     items = relationship("ReconciliationItem", back_populates="run", cascade="all, delete-orphan")
 

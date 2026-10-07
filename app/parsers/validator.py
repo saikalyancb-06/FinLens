@@ -358,6 +358,11 @@ class TransactionValidator:
             if is_upi_transaction(txn):
                 amt_val = round(float(txn.get("amount", 0.0) or txn.get("debit", 0.0) or txn.get("credit", 0.0)), 2)
                 dir_val = str(txn.get("transaction_type", "")).lower()
+                # The running balance is part of the key, as it is for every
+                # other row: two same-day UPI payments of the same amount to the
+                # same merchant are two payments when the balance moved between
+                # them (the statement prints a different balance on each). Only
+                # a row repeated with the SAME balance is a duplicate.
                 key = (
                     "UPI",
                     date_val,
@@ -365,6 +370,7 @@ class TransactionValidator:
                     amt_val,
                     dir_val,
                     ref_val if ref_val else desc_norm[:60],
+                    round(float(txn.get("balance", 0.0) or 0.0), 2),
                 )
                 msg = (
                     f"Duplicate UPI transaction filtered using date '{date_val}' and time '{time_val}' "

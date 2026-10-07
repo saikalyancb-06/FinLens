@@ -16,6 +16,7 @@ import httpx
 from app.mailbox.base import EmailProvider
 from app.mailbox.criteria import SearchCriteria
 from app.mailbox.errors import (
+    ConnectionConfigurationError,
     AuthenticationExpired,
     InsufficientPermissions,
     MessageNotFound,
@@ -124,6 +125,13 @@ class MicrosoftGraphProvider(EmailProvider):
                 "Reconnect and grant Mail.Read.",
                 provider="microsoft",
             )
+        if res.status_code == 404 and ("mailboxnotenabledforrestapi" in res.text.lower()
+                                       or "mailboxnotfound" in res.text.lower()):
+            raise ConnectionConfigurationError(
+                "This Microsoft account has no Outlook mailbox. If the address's mail "
+                "is on Google, connect it with Gmail; otherwise use 'Other email provider'.",
+                provider="microsoft",
+            )
         if res.status_code == 404:
             raise MessageNotFound("The Microsoft message or attachment no longer exists.",
                                   provider="microsoft")
@@ -141,6 +149,10 @@ class MicrosoftGraphProvider(EmailProvider):
 
     async def authenticate(self) -> None:
         await self._get(f"{GRAPH_BASE}/me")
+
+    async def check_mailbox(self) -> None:
+        """Prove there is an Outlook mailbox this token can read."""
+        await self._get(f"{GRAPH_BASE}/me/mailFolders/inbox")
 
     async def refresh_authentication(self) -> Optional[dict]:
         from app.mailbox.oauth.microsoft import microsoft_oauth_client

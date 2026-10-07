@@ -98,7 +98,8 @@ def test_case_a_residual_zero_active_unpresented_cheque(db_session):
     db_session.commit()
 
     engine = ReconciliationMatchingEngine(db_session, user.id, account.id, date(2026, 3, 1), date(2026, 3, 31))
-    run = engine.execute_run(import_batch_id=batch.id, force=True)
+    # Books opened at 1,500.00 (same as the bank); the 500.00 cheque takes them to 1,000.00.
+    run = engine.execute_run(import_batch_id=batch.id, force=True, book_opening_paise=150000)
 
     assert run.residual_paise == 0
     assert run.unmatched_book_count == 1
@@ -134,7 +135,9 @@ def test_case_b_residual_zero_pending_review_match(db_session):
         credit_paise="100000", # ₹1,000.00
         direction=Direction.CREDIT,
         source_type=SourceType.STATEMENT,
-        balance_paise="180000"  # Bank running balance matches computed book position (100000 opening + 80000 movement)
+        # Bank opened at 1,000.00 like the books; +1,000.00 credit -> 2,000.00.
+        # Books recorded 800.00, so the 200.00 difference is a BRS line and the bridge balances.
+        balance_paise="200000"
     )
     b = BookEntry(
         id=uuid.uuid4(),
@@ -157,6 +160,7 @@ def test_case_b_residual_zero_pending_review_match(db_session):
 
     assert run.residual_paise == 0
     assert run.pending_review_count == 1
+    assert any(it.brs_category == "amount_difference" and it.amount_paise == 20000 for it in run.items)
     assert run.verdict == RunVerdictEnum.RECONCILED_WITH_EXCEPTIONS.value
 
 

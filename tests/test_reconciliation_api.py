@@ -33,6 +33,12 @@ def get_auth_headers(client: TestClient, email: str, password: str = "Secret123!
     return headers
 
 
+def _run_defaults(client: TestClient, headers: dict) -> dict:
+    """Runs need the bank account and, for a first reconciliation, the book
+    opening balance (these tests start from zero)."""
+    accounts = client.get("/v1/bank-master/accounts", headers=headers).json()
+    return {"account_id": accounts[0]["id"], "book_opening": "0"}
+
 
 def create_test_account(db, user_id):
     account = Account(
@@ -50,7 +56,7 @@ def create_test_account(db, user_id):
 
 def test_1_create_reconciliation_run(client: TestClient):
     headers = get_auth_headers(client, "recon_user1@example.com")
-    res = client.post("/v1/reconciliation/runs", headers=headers, json={
+    res = client.post("/v1/reconciliation/runs", headers=headers, json={**_run_defaults(client, headers),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -64,7 +70,7 @@ def test_1_create_reconciliation_run(client: TestClient):
 def test_2_get_reconciliation_runs(client: TestClient):
     headers = get_auth_headers(client, "recon_user2@example.com")
     # Create run
-    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={
+    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={**_run_defaults(client, headers),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -86,7 +92,7 @@ def test_3_user_isolation_runs_list(client: TestClient):
     headers_b = get_auth_headers(client, "recon_userB@example.com")
 
     # Create run for User A
-    run_res = client.post("/v1/reconciliation/runs", headers=headers_a, json={
+    run_res = client.post("/v1/reconciliation/runs", headers=headers_a, json={**_run_defaults(client, headers_a),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -102,7 +108,7 @@ def test_3_user_isolation_runs_list(client: TestClient):
 
 def test_4_get_reconciliation_run_detail(client: TestClient):
     headers = get_auth_headers(client, "recon_user4@example.com")
-    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={
+    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={**_run_defaults(client, headers),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -121,7 +127,7 @@ def test_5_user_cannot_access_other_user_run(client: TestClient):
     headers_a = get_auth_headers(client, "recon_user5_a@example.com")
     headers_b = get_auth_headers(client, "recon_user5_b@example.com")
 
-    run_res = client.post("/v1/reconciliation/runs", headers=headers_a, json={
+    run_res = client.post("/v1/reconciliation/runs", headers=headers_a, json={**_run_defaults(client, headers_a),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -138,7 +144,7 @@ def test_6_get_run_matches_and_ownership(client: TestClient):
     headers_a = get_auth_headers(client, "recon_user6_a@example.com")
     headers_b = get_auth_headers(client, "recon_user6_b@example.com")
 
-    run_res = client.post("/v1/reconciliation/runs", headers=headers_a, json={
+    run_res = client.post("/v1/reconciliation/runs", headers=headers_a, json={**_run_defaults(client, headers_a),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -155,7 +161,7 @@ def test_6_get_run_matches_and_ownership(client: TestClient):
 
 def test_7_status_filtering_on_matches(client: TestClient):
     headers = get_auth_headers(client, "recon_user7@example.com")
-    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={
+    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={**_run_defaults(client, headers),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -171,7 +177,7 @@ def test_7_status_filtering_on_matches(client: TestClient):
 
 def test_8_confirm_match(client: TestClient):
     headers = get_auth_headers(client, "recon_user8@example.com")
-    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={
+    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={**_run_defaults(client, headers),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -205,11 +211,12 @@ def test_8_confirm_match(client: TestClient):
     db = next(client.app.dependency_overrides[get_db]())
     updated = db.query(ReconciliationMatch).get(match_id)
     assert updated.status == MatchStatusEnum.CONFIRMED.value
+    db.close()
 
 
 def test_9_reject_match(client: TestClient):
     headers = get_auth_headers(client, "recon_user9@example.com")
-    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={
+    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={**_run_defaults(client, headers),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -241,13 +248,14 @@ def test_9_reject_match(client: TestClient):
     db = next(client.app.dependency_overrides[get_db]())
     updated = db.query(ReconciliationMatch).get(match_id)
     assert updated.status == MatchStatusEnum.REJECTED.value
+    db.close()
 
 
 def test_10_user_cannot_confirm_other_user_match(client: TestClient):
     headers_a = get_auth_headers(client, "recon_user10_a@example.com")
     headers_b = get_auth_headers(client, "recon_user10_b@example.com")
 
-    run_res = client.post("/v1/reconciliation/runs", headers=headers_a, json={
+    run_res = client.post("/v1/reconciliation/runs", headers=headers_a, json={**_run_defaults(client, headers_a),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -272,11 +280,12 @@ def test_10_user_cannot_confirm_other_user_match(client: TestClient):
     res_b = client.post(f"/v1/reconciliation/matches/{match_id}/confirm", headers=headers_b)
     assert res_b.status_code == 404
     assert res_b.json()["detail"] == "Match not found"
+    db.close()
 
 
 def test_11_classify_item(client: TestClient):
     headers = get_auth_headers(client, "recon_user11@example.com")
-    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={
+    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={**_run_defaults(client, headers),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -308,11 +317,12 @@ def test_11_classify_item(client: TestClient):
     updated = db.query(ReconciliationItem).get(item_id)
     assert updated.brs_category == "bank_charge"
     assert updated.overridden_by_user == True
+    db.close()
 
 
 def test_12_review_queue_end_to_end_flow(client: TestClient):
     headers = get_auth_headers(client, "recon_user12@example.com")
-    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={
+    run_res = client.post("/v1/reconciliation/runs", headers=headers, json={**_run_defaults(client, headers),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -356,12 +366,13 @@ def test_12_review_queue_end_to_end_flow(client: TestClient):
     matches_res_2 = client.get(f"/v1/reconciliation/runs/{latest_run_id}/matches?status=pending_review", headers=headers)
     assert matches_res_2.status_code == 200
     assert len(matches_res_2.json()) == 0
+    db.close()
 
 
 def test_13_existing_run_replacement_behavior_doc(client: TestClient):
     """Document Phase 10 immutable versioning behavior: rerunning reconciliation creates version 2 superseding version 1."""
     headers = get_auth_headers(client, "recon_user13@example.com")
-    run_res_1 = client.post("/v1/reconciliation/runs", headers=headers, json={
+    run_res_1 = client.post("/v1/reconciliation/runs", headers=headers, json={**_run_defaults(client, headers),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True
@@ -369,7 +380,7 @@ def test_13_existing_run_replacement_behavior_doc(client: TestClient):
     run_id_1 = run_res_1.json()["run_id"]
 
     # Rerun for exact same period
-    run_res_2 = client.post("/v1/reconciliation/runs", headers=headers, json={
+    run_res_2 = client.post("/v1/reconciliation/runs", headers=headers, json={**_run_defaults(client, headers),
         "period_from": "2026-01-01",
         "period_to": "2026-01-31",
         "force": True

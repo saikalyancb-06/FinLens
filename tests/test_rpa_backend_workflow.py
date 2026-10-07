@@ -524,7 +524,7 @@ def test_statement_pipeline_and_idempotency_and_reconciliation(client: TestClien
         assert stmt.closing_balance_paise == 300000
 
         engine = ReconciliationMatchingEngine(db, user_id, account_id, stmt.period_from, stmt.period_to)
-        run = engine.execute_run(force=True)
+        run = engine.execute_run(force=True, book_opening_paise=0)
         assert run.unmatched_bank_count == 2
     finally:
         db.close()

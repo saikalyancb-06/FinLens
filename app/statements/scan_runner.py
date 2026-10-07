@@ -90,7 +90,33 @@ def _run_and_release(scan_id) -> None:
             _inflight.discard(str(scan_id))
 
 
+#: One scan per mailbox at a time. Connecting a mailbox starts its first scan,
+#: and a user who presses "Scan" while it runs would otherwise have two workers
+#: downloading and importing the same statements at once.
+_mailbox_locks: dict = {}
+_mailbox_locks_guard = threading.Lock()
+
+
+def _mailbox_lock(scan_id) -> threading.Lock:
+    from app.database.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        scan = db.query(MailboxScan).filter(MailboxScan.id == _as_uuid(scan_id)).first()
+        key = str(scan.connection_id) if scan is not None else f"scan:{scan_id}"
+    finally:
+        db.close()
+    with _mailbox_locks_guard:
+        return _mailbox_locks.setdefault(key, threading.Lock())
+
+
 def execute_scan(scan_id) -> Optional[MailboxScan]:
+    """Run one scan to completion; scans of the same mailbox take turns."""
+    with _mailbox_lock(scan_id):
+        return _execute_scan(scan_id)
+
+
+def _execute_scan(scan_id) -> Optional[MailboxScan]:
     """Run one scan to completion, in whichever thread calls this.
 
     Opens its own session: a worker thread must never share the request-scoped

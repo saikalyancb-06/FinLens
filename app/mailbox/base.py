@@ -52,6 +52,13 @@ class EmailProvider(abc.ABC):
         selects a mailbox. Always paired with ``disconnect``.
         """
 
+    async def check_mailbox(self) -> None:
+        """Prove a mailbox exists behind the credentials (not just an account).
+
+        Connectors override this; the default is ``authenticate``.
+        """
+        await self.authenticate()
+
     @abc.abstractmethod
     async def authenticate(self) -> None:
         """Prove the stored credentials still work.

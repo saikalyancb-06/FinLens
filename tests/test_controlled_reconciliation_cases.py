@@ -328,6 +328,11 @@ def test_controlled_case_6_duplicate_ledger_row(db_session: Session):
     )
     run = engine.execute_run(import_batch_id=batch.id, force=True)
 
-    dup_entries = [d for d in run.debug_log if d["match_status"] == "DUPLICATE"]
-    assert len(dup_entries) == 1
-    assert dup_entries[0]["ledger_transaction_id"] == str(b2.id)
+    # The repeated ledger row is kept and listed for review, never deleted.
+    dups = db_session.query(ReconciliationItem).filter(
+        ReconciliationItem.run_id == run.id,
+        ReconciliationItem.brs_category == "duplicate_ledger_credit").all()
+    assert len(dups) == 1
+    assert dups[0].book_entry_id in (b1.id, b2.id)
+    assert dups[0].exception_reason == "possible_duplicate_ledger_row"
+    assert run.matched_count == 1

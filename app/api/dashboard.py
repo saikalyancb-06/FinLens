@@ -118,15 +118,16 @@ def get_dashboard_summary(
             bank_acc_ids = [a.id for a in bank_accs]
             base_q = base_q.filter(Transaction.account_id.in_(bank_acc_ids)) if bank_acc_ids else base_q.filter(Transaction.account_id == bank_id)
 
-    today = date_type.today()
-    if from_date is not None or to_date is not None:
-        eff_from = from_date or date_type(1970, 1, 1)
-        eff_to = to_date or today
-        target_q = base_q.filter(Transaction.txn_date >= eff_from, Transaction.txn_date <= eff_to)
-        total_txns = target_q.count()
-    else:
-        target_q = base_q
-        total_txns = base_q.count()
+    # base_q   = the entity/account scope, all dates  (balances, data age)
+    # target_q = the same scope inside the selected period (every flow figure)
+    # Every tile below reads one of these two, so no tile can describe a
+    # different population from its neighbours.
+    target_q = base_q
+    if from_date is not None:
+        target_q = target_q.filter(Transaction.txn_date >= from_date)
+    if to_date is not None:
+        target_q = target_q.filter(Transaction.txn_date <= to_date)
+    total_txns = target_q.count()
 
     # PostgreSQL's SUM(bigint) returns numeric, which SQLAlchemy hands back as a
     # Decimal — mixing that with the float arithmetic below raises TypeError.
@@ -143,7 +144,7 @@ def get_dashboard_summary(
     uncat_category = db.query(Category).filter(Category.name.ilike("Uncategorized")).first()
     uncat_cat_id = uncat_category.id if uncat_category else None
 
-    uncategorized_count = base_q.filter(
+    uncategorized_count = target_q.filter(
         (Transaction.category_id == None) | (Transaction.category_id == uncat_cat_id)
     ).count()
 
@@ -205,9 +206,13 @@ def get_dashboard_summary(
     # is the old one reversed — txn_date DESC and row_index DESC NULLS FIRST is
     # exactly "the row the ascending pass would have finished on", including the
     # NULLS LAST/FIRST flip, so the row selected cannot differ.
+    # As at the end of the selected period: a balance is a point-in-time fact,
+    # so with a To date it is the last balance ON OR BEFORE that date, never a
+    # later one. (It used to be the latest balance overall whatever the filter.)
+    balance_q = base_q.filter(Transaction.txn_date <= to_date) if to_date is not None else base_q
     latest_balances = {
         txn_account_id: bal
-        for txn_account_id, bal in base_q.with_entities(
+        for txn_account_id, bal in balance_q.with_entities(
             Transaction.account_id, Transaction.balance_paise
         ).filter(Transaction.balance_paise.isnot(None)).distinct(
             Transaction.account_id
@@ -224,12 +229,15 @@ def get_dashboard_summary(
         # No running balances parsed (some statement formats omit them). Net
         # movement is the only figure available; it is a fallback, not the same
         # thing, so it is worth knowing that is what you are looking at.
-        liquidity_paise = all_credits - all_debits
+        liquidity_paise = (
+            int(balance_q.with_entities(func.coalesce(func.sum(Transaction.credit_paise), 0)).scalar() or 0)
+            - int(balance_q.with_entities(func.coalesce(func.sum(Transaction.debit_paise), 0)).scalar() or 0))
     liquidity_f = round(liquidity_paise / 100.0, 2)
-    net_movement_f = round((all_credits - all_debits) / 100.0, 2)
+    # "Net this period": the movement inside the selected dates, not all time.
+    net_movement_f = round((mtd_credit_paise - mtd_debit_paise) / 100.0, 2)
 
     # Calculate Risk Alerts & Anomalies dynamically (e.g. large high-value txns > 50,000 or uncategorized)
-    high_value_cnt = base_q.filter(
+    high_value_cnt = target_q.filter(
         (Transaction.debit_paise >= 5000000) | (Transaction.credit_paise >= 5000000)
     ).count()
 
@@ -279,52 +287,26 @@ def get_dashboard_summary(
         if has_txns:
             run_scan_if_data_changed(db, current_user.id)
 
-        # SCOPED THE SAME WAY THE REST OF THE PAGE IS.
-        def _scope_findings(q, model):
-            if scoped_account_ids is not None:
-                q = q.filter(
-                    or_(
-                        model.account_id.in_(scoped_account_ids),
-                        model.account_id.is_(None),
-                    )
-                ) if scoped_account_ids else q.filter(model.account_id.is_(None))
-            if from_date:
-                q = q.filter(or_(model.occurred_on.is_(None),
-                                 model.occurred_on >= from_date))
-            if to_date:
-                q = q.filter(or_(model.occurred_on.is_(None),
-                                 model.occurred_on <= to_date))
-            return q
+        # Scoped, dated and de-duplicated exactly as /compliance/anomalies and
+        # /compliance/violations list them (app/api/scoping.scope_findings), so
+        # the tile, the panel header and the list beneath it are one count.
+        from app.api.scoping import count_distinct_findings, scope_findings
 
-        anomaly_rows = dict(
-            _scope_findings(
-                db.query(AnomalyFinding.severity, func.count())
-                .filter(AnomalyFinding.user_id == current_user.id,
-                        AnomalyFinding.status == "open"),
-                AnomalyFinding,
-            ).group_by(AnomalyFinding.severity).all()
-        )
-        anomalies_cnt = sum(anomaly_rows.values())
-        critical_anomalies = anomaly_rows.get("critical", 0)
-        resolved_anomalies_cnt = _scope_findings(
-            db.query(AnomalyFinding).filter(
-                AnomalyFinding.user_id == current_user.id,
-                AnomalyFinding.status.in_(("resolved", "false_positive")),
-            ),
-            AnomalyFinding,
-        ).count()
+        def _findings(model, statuses):
+            return scope_findings(
+                db.query(model).filter(model.user_id == current_user.id,
+                                       model.status.in_(statuses)),
+                model, scoped_account_ids, from_date, to_date).all()
 
-        violation_rows = dict(
-            _scope_findings(
-                db.query(PolicyViolation.severity, func.count())
-                .filter(PolicyViolation.user_id == current_user.id,
-                        PolicyViolation.status == "open"),
-                PolicyViolation,
-            )
-            .group_by(PolicyViolation.severity).all()
-        )
-        open_violations = sum(violation_rows.values())
-        critical_violations = violation_rows.get("critical", 0)
+        anomaly_counts = count_distinct_findings(_findings(AnomalyFinding, ("open",)))
+        anomalies_cnt = anomaly_counts["total"]
+        critical_anomalies = anomaly_counts.get("critical", 0)
+        resolved_anomalies_cnt = count_distinct_findings(
+            _findings(AnomalyFinding, ("resolved", "false_positive")))["total"]
+
+        violation_counts = count_distinct_findings(_findings(PolicyViolation, ("open",)))
+        open_violations = violation_counts["total"]
+        critical_violations = violation_counts.get("critical", 0)
 
         comp = compliance_summary(db, current_user.id)
         compliance_pct = comp.get("compliance_pct")
@@ -349,10 +331,14 @@ def get_dashboard_summary(
         # Only the newest non-archived run per account counts. Reconciliation runs
         # supersede one another, so summing items across every historical run
         # counted the same bridge item once per re-run.
-        runs = db.query(ReconciliationRun).filter(
+        runs_q = db.query(ReconciliationRun).filter(
             ReconciliationRun.user_id == current_user.id,
             ReconciliationRun.archived_at.is_(None),
-        ).order_by(ReconciliationRun.account_id,
+        )
+        # Same accounts as every other tile (it used to count all accounts).
+        if scoped_account_ids is not None:
+            runs_q = runs_q.filter(ReconciliationRun.account_id.in_(scoped_account_ids or [None]))
+        runs = runs_q.order_by(ReconciliationRun.account_id,
                    ReconciliationRun.created_at.asc()).all()
         latest_run_per_account = {r.account_id: r for r in runs}   # last write wins
         live_run_ids = [r.id for r in latest_run_per_account.values()]
@@ -380,7 +366,7 @@ def get_dashboard_summary(
     try:
         charge_cat = db.query(Category).filter(Category.name.ilike("Bank Charges")).first()
         if charge_cat:
-            charges_paise = int(base_q.filter(
+            charges_paise = int(target_q.filter(
                 Transaction.category_id == charge_cat.id
             ).with_entities(func.coalesce(func.sum(Transaction.debit_paise), 0)).scalar() or 0)
     except Exception:
@@ -390,10 +376,8 @@ def get_dashboard_summary(
     last_stmt_date = None
     data_age_days = None
     try:
-        latest = db.query(func.max(Transaction.txn_date)).filter(
-            Transaction.user_id == current_user.id,
-            Transaction.superseded_by_id.is_(None),
-        ).scalar()
+        # Freshness of the accounts being looked at, not of the whole ledger.
+        latest = base_q.with_entities(func.max(Transaction.txn_date)).scalar()
         if latest:
             last_stmt_date = latest.isoformat()
             data_age_days = (datetime.utcnow().date() - latest).days
@@ -404,13 +388,16 @@ def get_dashboard_summary(
     avg_daily_burn_f = 0.0
     runway_days = None
     try:
-        span = db.query(func.min(Transaction.txn_date), func.max(Transaction.txn_date)).filter(
-            Transaction.user_id == current_user.id,
-            Transaction.superseded_by_id.is_(None),
-        ).one()
+        # Burn over the selected period and scope, so runway divides this
+        # scope's cash by this scope's burn (it used to divide scoped cash by
+        # the whole ledger's burn).
+        span = target_q.with_entities(func.min(Transaction.txn_date),
+                                      func.max(Transaction.txn_date)).one()
         if span[0] and span[1]:
-            days = max(1, (span[1] - span[0]).days)
-            net_burn = all_debits - all_credits
+            first = from_date or span[0]
+            last = to_date or span[1]
+            days = max(1, (last - first).days + 1)
+            net_burn = mtd_debit_paise - mtd_credit_paise
             if net_burn > 0:
                 avg_daily_burn_f = round(net_burn / days / 100.0, 2)
                 if avg_daily_burn_f > 0 and liquidity_f > 0:
@@ -468,36 +455,21 @@ def get_transaction_filters(
     from app.models.category import Category
     from app.models.prediction import Prediction
 
-    # Every category the transactions endpoint can actually FILTER on.
-    #
-    # This used to list only the names reachable through `category_id`, which
-    # left out every row whose category came from a prediction — and
-    # `/transactions?category=` matches on either. The dropdown built from this
-    # therefore offered fewer options than the filter behind it accepted.
-    #
-    # The union is drawn in SQL because the alternative the workbench used
-    # instead was to download the whole ledger and collect the distinct strings
-    # in the browser: 1,823 rows and 3.5 MB to populate one <select>.
-    linked = (
-        db.query(Category.name.label("name"))
-        .join(Transaction, Transaction.category_id == Category.id)
-        .filter(
-            Transaction.user_id == current_user.id,
-            Transaction.superseded_by_id == None,
-        )
+    # Exactly the labels the Transactions table shows in its Category column,
+    # which is also exactly what `/transactions?category=` matches on (both go
+    # through display_category_label). Drawn in SQL, not from loaded rows.
+    from app.api.transactions import display_category_label
+    label = display_category_label(Category, Prediction)
+    cats = (
+        db.query(label.label("name"))
+        .select_from(Transaction)
+        .outerjoin(Category, Category.id == Transaction.category_id)
+        .outerjoin(Prediction, Prediction.transaction_id == Transaction.id)
+        .filter(Transaction.user_id == current_user.id,
+                Transaction.superseded_by_id == None)
         .distinct()
+        .all()
     )
-    predicted = (
-        db.query(Prediction.predicted_category.label("name"))
-        .join(Transaction, Prediction.transaction_id == Transaction.id)
-        .filter(
-            Transaction.user_id == current_user.id,
-            Transaction.superseded_by_id == None,
-            Prediction.predicted_category.isnot(None),
-        )
-        .distinct()
-    )
-    cats = linked.union(predicted).all()
 
     min_date = db.query(func.min(Transaction.txn_date)).filter(
         Transaction.user_id == current_user.id,

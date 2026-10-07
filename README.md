@@ -11,7 +11,7 @@ An enterprise-grade, multi-tenant Treasury Management System (TMS) and Automated
 ### Key Highlights
 - **Multi-Channel Ingestion**: Support for PDF, CSV, Excel statement uploads (with PDF password unlock), RPA automation, Account Aggregator (AA) integrations, and multi-provider mailbox discovery (Gmail API, Microsoft Graph, IMAP over TLS).
 - **Hybrid Categorization Engine**: Rule Engine matching ($97\%$ default confidence threshold) with seamless fallback to CatBoost ML multi-class classification.
-- **Automated BRS Engine**: Priority-tiered 5-pass reconciliation matching engine (Exact Reference Match $\rightarrow$ Exact Amount & Date $\rightarrow$ Cross-Currency $\rightarrow$ Date Mismatch Tolerance $\rightarrow$ Amount Difference Identification).
+- **Automated BRS Engine**: books-vs-bank reconciliation that auto-matches only on transaction IDs (cheque no, UTR, voucher no) or unambiguous same-amount pairs, sends name-based and group matches to review, lists amount differences as their own BRS lines, and carries outstanding items forward period to period. Rules: [docs/RECONCILIATION_ENGINE.md](docs/RECONCILIATION_ENGINE.md).
 - **Multi-Tenant Data Isolation**: Complete tenant scoping across database schemas, files, email schedules, and reports.
 - **Responsive ERP Layout**: Zero-overflow responsive UI supporting 320px mobile viewports up to 1920px widescreen monitors.
 
@@ -110,22 +110,24 @@ flowchart LR
 
 ---
 
-### 3. Automated Bank Reconciliation (BRS) 5-Tier Matching Engine
+### 3. Automated Bank Reconciliation (BRS) Matching Engine
 
 ```mermaid
 flowchart TD
-    A[Imported Books Ledger & Bank Transactions] --> B[Tier 1: Exact Reference Match\nMatch UTR / Reference No & Exact Amount]
-    B -- Unmatched --> C[Tier 2: Exact Amount & Date Match\nMatch Date & Amount Within Same Account]
-    C -- Unmatched --> D[Tier 3: Cross-Currency & FX Match\nMatch Reference Across Converted Currency]
-    D -- Unmatched --> E[Tier 4: Date Mismatch Tolerance\nMatch Amount & Narration within +/- 7 Days]
-    E -- Unmatched --> F[Tier 5: Amount Difference Tolerance\nMatch Narration & Date with Minor Bank Charges]
-    B --> G[Confirmed Match Record]
-    C --> G
-    D --> G
-    E --> H[Flag as Date Mismatch]
-    F --> I[Flag as Amount Mismatch]
-    E -- Failed --> J[Unmatched Outstanding Item]
-    F -- Failed --> J
+    A[Ledger entries in period + items carried from last run] --> M
+    B[Bank entries in period + items carried from last run] --> M
+    M{Matching} --> P0[Reviewer decisions from earlier runs: confirmed re-applied, rejected never re-proposed]
+    P0 --> PA[Auto: same amount + same cheque/UTR/voucher ID, 7 days, cheques 90]
+    PA --> PB[Auto: same amount, same date]
+    PB --> PC[Auto: same amount within 7 days, only candidate on both sides]
+    PC --> PD[Review: same ID, different amount -> difference line]
+    PD --> PF[Review: 1 bank = 2-5 ledger rows, 1 ledger row = 2-5 bank rows]
+    PF --> PE[Review: same amount, shared party name or nearest date, 30 days]
+    PE --> BR[BRS bridge: book closing +/- outstanding items = computed bank closing]
+    BR --> V{residual = bank closing - computed}
+    V -- 0, nothing open --> C1[Reconciled clean]
+    V -- 0, items or reviews --> C2[Reconciled with exceptions]
+    V -- not 0 --> C3[Unreconciled]
 ```
 
 ---
@@ -196,7 +198,8 @@ Automated Bank Reconciliation Statement (BRS) generator comparing internal accou
 #### Features & Components:
 - **Books Import**: Drag-and-drop Tally/ERP CSV or Excel exports. Auto-detects column headers (`Date`, `Description`, `Debit`, `Credit`, `Ref`).
 - **Convention Selection**: Supports both standard CSV (`Debit=Out`, `Credit=In`) and Tally-style (`Debit=In`, `Credit=Out`) conventions.
-- **Automated 5-Pass Matching**: Executes priority matching passes and calculates:
+- **Book Opening Balance**: typed on the screen, or the previous reconciliation's closing, or the ledger file's "Opening Balance" row — never borrowed from the bank. Asked for only when none of these exists.
+- **Matching** (rules in [docs/RECONCILIATION_ENGINE.md](docs/RECONCILIATION_ENGINE.md)): calculates
   - Opening & Closing Balances
   - Net Movement
   - Verdict (`All Clear`, `Reconciled with Outstanding Items`, or `Difference Found`)

@@ -22,7 +22,7 @@ from app.models.transaction import Transaction, Direction
 from app.database.session import SessionLocal
 from app.models.user import User
 from app.models.account import Account
-from app.services.reconciliation_engine import ReconciliationMatchingEngine
+from app.services.reconciliation_engine import ReconciliationMatchingEngine, BookOpeningRequired
 
 def test_accounting_bridge_invariants(setup_test_db):
     db_session = SessionLocal()
@@ -265,12 +265,12 @@ def test_period_to_bank_closing_boundary(setup_test_db):
 
         # Case A: 2025-03-01 -> 2025-03-30
         engine_a = ReconciliationMatchingEngine(db_session, user_id, account_id, date(2025, 3, 1), date(2025, 3, 30))
-        run_a = engine_a.execute_run()
+        run_a = engine_a.execute_run(book_opening_paise=0)
         assert run_a.bank_closing_paise == 23986998, f"Case A Bank Closing should be 23986998 (Mar 30 balance), got {run_a.bank_closing_paise}"
 
         # Case B: 2025-03-01 -> 2025-03-31
         engine_b = ReconciliationMatchingEngine(db_session, user_id, account_id, date(2025, 3, 1), date(2025, 3, 31))
-        run_b = engine_b.execute_run()
+        run_b = engine_b.execute_run(book_opening_paise=0)
         assert run_b.bank_closing_paise == 24793498, f"Case B Bank Closing should be 24793498 (Mar 31 balance), got {run_b.bank_closing_paise}"
         assert run_b.bank_closing_paise - run_a.bank_closing_paise == 806500, "Difference between Mar 31 and Mar 30 must equal +Rs. 8,065"
     finally:
@@ -279,11 +279,10 @@ def test_period_to_bank_closing_boundary(setup_test_db):
 
 def test_no_explicit_book_opening_semantics(setup_test_db):
     """
-    Case A: No explicit book opening provided.
-    Opening balance = Rs 995.64 (99564 paise)
-    Net movement = Rs 58,161.00 (5816100 paise)
-    Closing position = Rs 59,156.64 (5915664 paise)
-    API must return has_book_opening = False and separate opening/net movement properties.
+    Case A: no book opening anywhere (not typed, no previous run, no opening row
+    in the file). The engine must NOT borrow the bank balance (Rs 995.64 here):
+    it stops and asks. Once the user types Rs 995.64, the arithmetic is
+    opening 99564 + movement 5816100 = closing 5915664.
     """
     db_session = SessionLocal()
     try:
@@ -310,7 +309,7 @@ def test_no_explicit_book_opening_semantics(setup_test_db):
             filename="march2023_ledger.csv", file_sha256="sha_mar23",
             column_mapping_json={"entry_date": "Date", "narration": "Description", "money_in": "Credit", "money_out": "Debit"},
             row_count=1, period_from=date(2023, 3, 1), period_to=date(2023, 3, 28),
-            book_opening_paise=0
+            book_opening_paise=None
         )
         be = BookEntry(
             user_id=user_id, account_id=account_id, import_batch_id=import_batch.id, row_index=1,
@@ -321,8 +320,12 @@ def test_no_explicit_book_opening_semantics(setup_test_db):
         db_session.commit()
 
         engine = ReconciliationMatchingEngine(db_session, user_id, account_id, date(2023, 3, 1), date(2023, 3, 28))
-        run = engine.execute_run(import_batch_id=import_batch.id)
+        with pytest.raises(BookOpeningRequired):
+            engine.execute_run(import_batch_id=import_batch.id)
+        db_session.rollback()
 
+        run = engine.execute_run(import_batch_id=import_batch.id, book_opening_paise=99564)
+        assert run.book_opening_source == "manual"
         assert run.opening_balance_paise == 99564
         assert run.net_movement_paise == 5816100
         assert run.book_closing_paise == 5915664
@@ -525,9 +528,9 @@ def test_out_of_period_ledger_entries_excluded_from_net_movement(setup_test_db):
         db_session.commit()
 
         engine = ReconciliationMatchingEngine(db_session, user_id, account_id, date(2026, 5, 1), date(2026, 5, 31))
-        run = engine.execute_run(import_batch_id=import_batch.id)
+        run = engine.execute_run(import_batch_id=import_batch.id, book_opening_paise=1000000)
 
-        # Bank opening = 1000000 (Rs 10,000)
+        # Book opening typed as Rs 10,000
         assert run.opening_balance_paise == 1000000
         # In-period net movement = 4085000 (Rs 40,850)
         assert run.net_movement_paise == 4085000
@@ -673,7 +676,7 @@ def test_may_2026_opening_balance_and_out_of_period_exclusion(setup_test_db):
             db=db_session, user_id=user_id, account_id=account.id,
             period_from=date(2026, 5, 1), period_to=date(2026, 5, 31)
         )
-        run = engine.execute_run(import_batch_id=batch.id, force=True)
+        run = engine.execute_run(import_batch_id=batch.id, force=True, book_opening_paise=1000000)
 
         # Assertions strictly enforcing prompt invariants
         assert run.opening_balance_paise == 1000000, f"Expected opening 1000000, got {run.opening_balance_paise}"

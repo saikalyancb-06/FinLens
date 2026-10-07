@@ -132,7 +132,8 @@ def test_invariant_single_outstanding_cheque(db):
     Book has one unpresented cheque (₹500), no bank transactions.
     bridge ADD 500.
     computed = book_closing(0) + 500 = 500
-    bank_closing = None (no transaction) → engine uses computed as reference → residual = 0
+    bank_closing = None (no transaction) → the bridge is built but cannot be
+    checked against a real bank balance, so the run is never called reconciled.
     """
     user, account = make_user_account(db)
     today = date(2026, 3, 10)
@@ -148,8 +149,8 @@ def test_invariant_single_outstanding_cheque(db):
     # book_item_net = +50000 (ADD)
     assert run.computed_bank_closing_paise == run.book_closing_paise + 50000
     assert run.bank_closing_paise == run.computed_bank_closing_paise  # engine sets equal
-    assert run.verdict in (RunVerdictEnum.RECONCILED_CLEAN.value,
-                           RunVerdictEnum.RECONCILED_WITH_EXCEPTIONS.value)
+    assert run.status == "completed_no_bank_statement"
+    assert run.verdict == RunVerdictEnum.UNRECONCILED.value
 
 
 def test_invariant_unbooked_bank_charge_produces_residual(db):
@@ -166,7 +167,7 @@ def test_invariant_unbooked_bank_charge_produces_residual(db):
     db.commit()
 
     engine = ReconciliationMatchingEngine(db, user.id, account.id, date(2026, 3, 1), date(2026, 3, 31))
-    run = engine.execute_run()
+    run = engine.execute_run(book_opening_paise=0)
 
     assert run.computed_bank_closing_paise == -2000
     assert run.bank_closing_paise == -2000
@@ -280,10 +281,10 @@ def test_invariant_residual_formula_always_holds(db):
             engine = ReconciliationMatchingEngine(
                 session, user.id, account.id, date(2026, 3, 1), date(2026, 3, 31)
             )
-            run = engine.execute_run()
+            run = engine.execute_run(book_opening_paise=0)
 
-            # Identity must always hold
-            assert run.residual_paise == (run.computed_bank_closing_paise - run.bank_closing_paise), (
+            # Identity must always hold: residual = bank closing - computed bank closing
+            assert run.residual_paise == (run.bank_closing_paise - run.computed_bank_closing_paise), (
                 f"Identity violated for bank_closing={scenario_bank_closing}: "
                 f"residual={run.residual_paise}, computed={run.computed_bank_closing_paise}, "
                 f"bank={run.bank_closing_paise}"

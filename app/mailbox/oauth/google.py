@@ -91,7 +91,8 @@ class GoogleOAuthClient(OAuthClient):
 
     # ---- flow ------------------------------------------------------------
 
-    def authorization_url(self, state: str, redirect_uri: Optional[str] = None) -> str:
+    def authorization_url(self, state: str, redirect_uri: Optional[str] = None,
+                          login_hint: Optional[str] = None) -> str:
         params = {
             "client_id": self.client_id,
             "redirect_uri": (redirect_uri or self.default_redirect_uri).strip(),
@@ -105,6 +106,10 @@ class GoogleOAuthClient(OAuthClient):
             "include_granted_scopes": "true",
             "state": state,
         }
+        if login_hint:
+            # Opens the sign-in page on the address the user typed, so the
+            # account that is authorised is the mailbox they meant.
+            params["login_hint"] = login_hint.strip()
         return f"{AUTHORIZATION_URL}?{urllib.parse.urlencode(params)}"
 
     async def exchange_code(self, code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:

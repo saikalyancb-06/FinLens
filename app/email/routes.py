@@ -110,17 +110,36 @@ def _owned_attachment(db: Session, user: User, attachment_id: Any) -> EmailAttac
     return attachment
 
 
-def _callback_uri(request: Request, path: str, fallback: str) -> str:
-    """Build the redirect URI from the host actually serving this request.
+def _callback_uri(request: Request, path: str, fallback: str, env_name: Optional[str] = None) -> str:
+    """The redirect URI for one sign-in, identical for both legs of the flow.
 
     OAuth requires byte-identical redirect URIs between the authorization
-    request and the token exchange, so both are derived the same way from the
-    same header rather than one being configured and the other computed.
+    request and the token exchange, so both are derived here the same way.
+
+    * When ``GOOGLE_REDIRECT_URI`` / ``MICROSOFT_REDIRECT_URI`` is set it wins:
+      it is the address registered in the provider console, and a URI derived
+      from the request (127.0.0.1 instead of localhost, a second domain) is
+      rejected by Google as ``redirect_uri_mismatch``. The exception is a
+      localhost value left over from development on a server reached by its
+      public name, which can never work.
+    * Otherwise it is built from the host serving the request, https when the
+      proxy in front says so.
     """
-    host = request.headers.get("host")
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    configured = (os.getenv(env_name) or "").strip() if env_name else ""
+    if configured:
+        local_cfg = any(h in configured for h in ("://localhost", "://127.0.0.1"))
+        local_req = (host or "").split(":")[0] in ("localhost", "127.0.0.1", "testserver")
+        if not local_cfg or local_req:
+            return configured
     if host:
-        return f"{request.url.scheme}://{host}{path}"
+        scheme = (request.headers.get("x-forwarded-proto") or request.url.scheme).split(",")[0].strip()
+        return f"{scheme}://{host}{path}"
     return fallback
+
+
+def _redirect_env(provider_key: str) -> str:
+    return "GOOGLE_REDIRECT_URI" if provider_key == "gmail" else "MICROSOFT_REDIRECT_URI"
 
 
 def _issue_state(db: Session, user: User) -> str:
@@ -138,6 +157,11 @@ def _issue_state(db: Session, user: User) -> str:
 
 
 def _consume_state(db: Session, state: Optional[str]) -> Optional[User]:
+    found = _consume_state_record(db, state)
+    return found[0] if found else None
+
+
+def _consume_state_record(db: Session, state: Optional[str]):
     """Validate and burn an anti-CSRF state, returning the user who created it.
 
     Single use and server-side: the state is the only thing tying a callback
@@ -155,10 +179,31 @@ def _consume_state(db: Session, state: Optional[str]) -> Optional[User]:
         return None
     record.consumed = True
     db.commit()
-    return db.query(User).filter(User.id == record.user_id).first()
+    user = db.query(User).filter(User.id == record.user_id).first()
+    return (user, record) if user else None
 
 
-def _render_result_html(title: str, message: str, *, ok: bool, email_address: str = "") -> HTMLResponse:
+def _record_result(db: Session, record: Optional[OAuthState], *, status_: str, detail: str = "",
+                   email: str = "", connection_id=None, scan_id=None) -> None:
+    if record is None:
+        return
+    try:
+        record.result_status = status_
+        record.result_detail = (detail or "")[:1000] or None
+        record.result_email = email or None
+        record.connection_id = connection_id
+        record.scan_id = scan_id
+        # Keep it readable for the page that is waiting on it.
+        record.expires_at = max(record.expires_at,
+                                datetime.datetime.utcnow() + datetime.timedelta(minutes=10))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("[Email OAuth] could not record the sign-in result")
+
+
+def _render_result_html(title: str, message: str, *, ok: bool, email_address: str = "",
+                        state: str = "") -> HTMLResponse:
     """The page the OAuth popup lands on. Escaped: every value here is external."""
     accent = "#16a34a" if ok else "#dc2626"
     background = "#f8fafc" if ok else "#fef2f2"
@@ -166,24 +211,33 @@ def _render_result_html(title: str, message: str, *, ok: bool, email_address: st
     safe_message = html.escape(message)
     safe_email = html.escape(email_address)
     payload_type = "MAILBOX_CONNECTED" if ok else "MAILBOX_CONNECT_FAILED"
+    safe_state = html.escape(state)
+    import json as _json
+    detail_js = _json.dumps(message).replace("<", "\\u003c")
+    ok_js = "true" if ok else "false"
     return HTMLResponse(content=f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>{safe_title}</title></head>
 <body style="font-family: system-ui, -apple-system, sans-serif; text-align:center; padding:40px; background:{background}; color:#0f172a;">
   <div style="background:#fff; max-width:460px; margin:0 auto; padding:28px; border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,.08); border:1px solid #e2e8f0;">
     <h2 style="color:{accent}; margin:0 0 10px 0; font-size:19px;">{safe_title}</h2>
     <p style="color:#475569; font-size:14px; margin:6px 0;">{safe_message}</p>
-    <p style="color:#94a3b8; font-size:12px; margin-top:18px;">You can close this window.</p>
+    <p style="color:#94a3b8; font-size:12px; margin-top:18px;">You can close this window, or <a href="/ingestion">return to Treasury Lens</a>.</p>
   </div>
   <script>
     (function () {{
+      var msg = {{ type: '{payload_type}', email: '{safe_email}', state: '{safe_state}', detail: {detail_js} }};
       try {{
         if (window.opener && !window.opener.closed) {{
-          window.opener.postMessage({{ type: '{payload_type}', email: '{safe_email}' }}, '*');
+          window.opener.postMessage(msg, window.location.origin);
           // Kept for the previous front-end build, which listens for this name.
-          window.opener.postMessage({{ type: 'GMAIL_CONNECTED', email: '{safe_email}' }}, '*');
+          if ({ok_js}) window.opener.postMessage({{ type: 'GMAIL_CONNECTED', email: '{safe_email}' }}, window.location.origin);
         }}
       }} catch (e) {{}}
-      setTimeout(function () {{ try {{ window.close(); }} catch (e) {{}} }}, 1200);
+      // Reaches the app tab even when the provider's page cut the popup off
+      // from its opener (Cross-Origin-Opener-Policy).
+      try {{ var bc = new BroadcastChannel('kredo-mailbox'); bc.postMessage(msg); bc.close(); }} catch (e) {{}}
+      // Closed only on success: a failure stays on screen so it can be read.
+      if ({ok_js}) setTimeout(function () {{ try {{ window.close(); }} catch (e) {{}} }}, 1500);
     }})();
   </script>
 </body></html>""")
@@ -370,6 +424,7 @@ def list_connections(
 def authorize_provider(
     provider: str,
     request: Request,
+    login_hint: Optional[str] = Query(None, description="Address to open the sign-in page on"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -400,11 +455,15 @@ def authorize_provider(
         )
 
     callback_path = "/email/oauth/callback" if key == "gmail" else f"/email/oauth/{key}/callback"
-    redirect_uri = _callback_uri(request, callback_path, client.default_redirect_uri)
+    redirect_uri = _callback_uri(request, callback_path, client.default_redirect_uri, _redirect_env(key))
     state = _issue_state(db, current_user)
     logger.info("[Email OAuth] user %s starting %s connection", current_user.id, key)
+    hint = (login_hint or "").strip() or None
+    if hint and "@" not in hint:
+        hint = None
     return {
-        "authorization_url": client.authorization_url(state, redirect_uri=redirect_uri),
+        "authorization_url": client.authorization_url(state, redirect_uri=redirect_uri, login_hint=hint),
+        "state": state,
         "provider": key,
         "redirect_uri": redirect_uri,
         "scopes": client.scopes,
@@ -463,9 +522,11 @@ async def route_email_endpoint(
     }
 
     if auth_type == "oauth":
-        auth_data = authorize_provider(provider_key, request, current_user=current_user, db=db)
+        auth_data = authorize_provider(provider_key, request, login_hint=route_res["email_address"],
+                                       current_user=current_user, db=db)
         response_data.update({
             "authorization_url": auth_data["authorization_url"],
+            "state": auth_data["state"],
             "redirect_uri": auth_data["redirect_uri"],
             "scopes": auth_data["scopes"],
             "configured": auth_data["configured"],
@@ -474,6 +535,7 @@ async def route_email_endpoint(
         })
     elif auth_type == "app_password":
         response_data["imap_settings"] = route_res.get("imap_settings")
+        response_data["alternatives"] = route_res.get("alternatives") or []
 
     return response_data
 
@@ -486,7 +548,7 @@ def connect_mailbox(
     db: Session = Depends(get_db),
 ):
     """Backwards-compatible entry point; defaults to Gmail as it always did."""
-    return authorize_provider(provider, request, current_user=current_user, db=db)
+    return authorize_provider(provider, request, login_hint=None, current_user=current_user, db=db)
 
 
 class ImapConnectPayload(BaseModel):
@@ -719,12 +781,22 @@ async def _handle_oauth_callback(
 ) -> Any:
     wants_html = "text/html" in request.headers.get("accept", "") and \
                  "application/json" not in request.headers.get("accept", "")
+    record: Optional[OAuthState] = None
 
     def fail(message: str, http_status: int = 400):
         logger.warning("[Email OAuth] %s connection failed: %s", provider, message)
+        _record_result(db, record, status_="failed", detail=message)
         if wants_html:
-            return _render_result_html("Mailbox connection failed", message, ok=False)
+            return _render_result_html("Mailbox connection failed", message, ok=False, state=state or "")
         raise HTTPException(status_code=http_status, detail=message)
+
+    # The state is read first, so that even a refusal on the provider's page is
+    # recorded against the sign-in the user started and the app can show it.
+    found = _consume_state_record(db, state)
+    if found is not None:
+        user, record = found
+    else:
+        user = None
 
     error_description = request.query_params.get("error_description", "")
     if error:
@@ -741,7 +813,6 @@ async def _handle_oauth_callback(
             friendly = f"The provider returned an error: {error_description or error}"
         return fail(friendly)
 
-    user = _consume_state(db, state)
     if user is None:
         # Wording kept verbatim from the previous implementation: it is asserted
         # on by the OAuth-CSRF regression test, and it is already the clearest
@@ -753,7 +824,7 @@ async def _handle_oauth_callback(
         return fail("The provider did not return an authorization code.")
 
     client = get_oauth_client(provider)
-    redirect_uri = _callback_uri(request, callback_path, client.default_redirect_uri)
+    redirect_uri = _callback_uri(request, callback_path, client.default_redirect_uri, _redirect_env(provider))
 
     try:
         tokens = await client.exchange_code(code, redirect_uri=redirect_uri)
@@ -767,7 +838,22 @@ async def _handle_oauth_callback(
     if not email_address:
         return fail("The provider did not disclose which mailbox was authorised.")
 
+    # Google lets the user untick the mail permission on its consent page; the
+    # sign-in then "succeeds" with a token that cannot read a single message.
     granted = tokens.get("scope") or " ".join(client.scopes)
+    needed = "gmail.readonly" if provider == "gmail" else "mail.read"
+    if needed not in granted.lower():
+        return fail("Permission to read your mail was not granted. Connect again and "
+                    "leave the 'Read your email' box ticked on the consent page.")
+
+    # Prove a mailbox exists behind the account before saving it: a Google
+    # account can exist for an address whose mail is on Microsoft, and the
+    # reverse; either way nothing could be picked up.
+    try:
+        await _check_mailbox(provider, tokens)
+    except MailboxError as exc:
+        return fail(exc.detail)
+
     connection = _upsert_connection(
         db, user,
         provider=provider,
@@ -780,11 +866,24 @@ async def _handle_oauth_callback(
     logger.info("[Email OAuth] user %s connected %s mailbox %s",
                 user.id, provider, connection.id)
 
+    # Pick-up starts at once: connecting a mailbox is asking for its statements.
+    scan_id = None
+    try:
+        if os.getenv("MAILBOX_SCAN_ON_CONNECT", "true").lower() == "true":
+            scan = create_scan(db, user_id=user.id, connection=connection, auto_import=True)
+            start_scan_in_background(scan.id)
+            scan_id = scan.id
+    except Exception:
+        logger.exception("[Email OAuth] could not start the first scan for %s", connection.id)
+
+    _record_result(db, record, status_="connected", email=email_address,
+                   connection_id=connection.id, scan_id=scan_id)
+
     if wants_html:
         return _render_result_html(
             "Mailbox connected",
-            f"Successfully authorised {email_address}.",
-            ok=True, email_address=email_address,
+            f"Successfully authorised {email_address}. Looking for statements now.",
+            ok=True, email_address=email_address, state=state or "",
         )
     return {
         "status": "success",
@@ -792,7 +891,49 @@ async def _handle_oauth_callback(
         "provider": provider,
         "email_address": email_address,
         "connection_id": str(connection.id),
+        "scan_id": str(scan_id) if scan_id else None,
         "connected_at": datetime.datetime.utcnow().isoformat(),
+    }
+
+
+async def _check_mailbox(provider: str, tokens: Dict[str, Any]) -> None:
+    from app.config import settings
+
+    access = tokens.get("access_token") or ""
+    if settings.DEMO_MODE or access.startswith("demo_"):
+        return
+    from app.mailbox.registry import PROVIDER_CLASSES
+
+    conn = PROVIDER_CLASSES[normalise_provider(provider)](
+        access_token=access, refresh_token=tokens.get("refresh_token"))
+    try:
+        await conn.connect()
+        await conn.check_mailbox()
+    finally:
+        try:
+            await conn.disconnect()
+        except Exception:
+            pass
+
+
+@router.get("/oauth/result", summary="Outcome of a mailbox sign-in started by this user")
+def oauth_result(
+    state: str = Query(..., min_length=8, max_length=255),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """``pending`` until the provider sends the user back, then ``connected``
+    (with the connection and the first scan) or ``failed`` (with the reason)."""
+    record = db.query(OAuthState).filter(OAuthState.state_value == state,
+                                         OAuthState.user_id == current_user.id).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Unknown or expired sign-in.")
+    return {
+        "status": record.result_status or "pending",
+        "detail": record.result_detail,
+        "email_address": record.result_email,
+        "connection_id": str(record.connection_id) if record.connection_id else None,
+        "scan_id": str(record.scan_id) if record.scan_id else None,
     }
 
 

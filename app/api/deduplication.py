@@ -9,6 +9,7 @@ from app.database.session import get_db
 from app.models.user import User
 from app.models.account import Account
 from app.models.duplicate_match import DuplicateMatch, MatchStatus, DuplicateTier
+from app.api.review_rows import bank_row
 from app.models.transaction import Transaction
 from app.services.deduplication_engine import DeduplicationEngine
 from app.utils.security import get_current_user
@@ -92,7 +93,13 @@ def list_duplicate_matches(
                 "direction": kept_tx.direction.value if hasattr(kept_tx.direction, 'value') else str(kept_tx.direction),
                 "narration": kept_tx.narration_clean or kept_tx.narration_raw,
                 "reference_no": kept_tx.reference_no
-            } if kept_tx else None
+            } if kept_tx else None,
+            # The same row shape the Manual Review tab renders, so the
+            # duplicates tab shows each transaction exactly as that tab does.
+            "rows": [r for r in (
+                dict(bank_row(dup_tx), role="duplicate") if dup_tx else None,
+                dict(bank_row(kept_tx), role="kept") if kept_tx else None,
+            ) if r],
         })
 
     return results

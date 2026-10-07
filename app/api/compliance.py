@@ -9,10 +9,10 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from app.api.scoping import accounts_in_scope
+from app.api.scoping import accounts_in_scope, count_distinct_findings, finding_key, scope_findings
 from app.compliance.anomaly_engine import ANOMALY_TYPES, detect_anomalies
 from app.compliance.auto_scan import ensure_rules, run_scan
 from app.compliance.policy_engine import compliance_summary, evaluate_policies
@@ -207,6 +207,8 @@ def analyze(
 def overview(
     account_id: Optional[uuid.UUID] = Query(None),
     entity_id: Optional[uuid.UUID] = Query(None),
+    start_date: Optional[datetime.date] = Query(None),
+    end_date: Optional[datetime.date] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -235,22 +237,20 @@ def overview(
     if has_txns and not has_findings:
         run_scan_safely(db, current_user.id)
 
-    def _scoped(q):
-        return q if scope_ids is None else q.filter(AnomalyFinding.account_id.in_(scope_ids))
-
-    by_severity = dict(
-        _scoped(db.query(AnomalyFinding.severity, func.count())
-                .filter(AnomalyFinding.user_id == current_user.id,
-                        AnomalyFinding.status == "open"))
-        .group_by(AnomalyFinding.severity).all()
-    )
-    by_type = [
-        {"type": t, "label": ANOMALY_TYPES.get(t, t), "count": c}
-        for t, c in _scoped(db.query(AnomalyFinding.anomaly_type, func.count())
-                            .filter(AnomalyFinding.user_id == current_user.id,
-                                    AnomalyFinding.status == "open"))
-        .group_by(AnomalyFinding.anomaly_type).order_by(func.count().desc()).all()
-    ]
+    open_rows = scope_findings(
+        db.query(AnomalyFinding).filter(AnomalyFinding.user_id == current_user.id,
+                                        AnomalyFinding.status == "open"),
+        AnomalyFinding, scope_ids, start_date, end_date).all()
+    by_severity = count_distinct_findings(open_rows)
+    by_severity.pop("total", None)
+    seen, type_counts = set(), {}
+    for a in open_rows:
+        k = finding_key(a)
+        if k not in seen:
+            seen.add(k)
+            type_counts[a.anomaly_type] = type_counts.get(a.anomaly_type, 0) + 1
+    by_type = [{"type": t, "label": ANOMALY_TYPES.get(t, t), "count": c}
+               for t, c in sorted(type_counts.items(), key=lambda kv: -kv[1])]
 
     summary = compliance_summary(db, current_user.id, account_ids=scope_ids)
 
@@ -278,14 +278,15 @@ def list_anomalies(
     severity: Optional[str] = Query(None),
     account_id: Optional[uuid.UUID] = Query(None),
     entity_id: Optional[uuid.UUID] = Query(None),
+    start_date: Optional[datetime.date] = Query(None),
+    end_date: Optional[datetime.date] = Query(None),
     limit: int = Query(100, le=500),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     q = db.query(AnomalyFinding).filter(AnomalyFinding.user_id == current_user.id)
     scope_ids = accounts_in_scope(db, current_user, account_id, entity_id)
-    if scope_ids is not None:
-        q = q.filter(AnomalyFinding.account_id.in_(scope_ids))
+    q = scope_findings(q, AnomalyFinding, scope_ids, start_date, end_date)
     if status_filter and status_filter != "all":
         q = q.filter(AnomalyFinding.status == status_filter)
     if anomaly_type:
@@ -294,7 +295,10 @@ def list_anomalies(
         q = q.filter(AnomalyFinding.severity == severity)
 
     severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    rows = q.limit(limit * 3).all()
+    # Most severe first IN SQL, so the rows fetched are the ones that will be
+    # shown (sorting after an unordered LIMIT could drop a critical finding).
+    sev = case({"critical": 0, "high": 1, "medium": 2, "low": 3}, value=AnomalyFinding.severity, else_=9)
+    rows = q.order_by(sev, AnomalyFinding.amount_paise.desc().nullslast()).limit(limit * 3).all()
     rows.sort(key=lambda a: (severity_rank.get(a.severity, 9),
                              -(a.amount_paise or 0)))
 
@@ -347,6 +351,8 @@ def list_violations(
     rule_id: Optional[uuid.UUID] = Query(None),
     account_id: Optional[uuid.UUID] = Query(None),
     entity_id: Optional[uuid.UUID] = Query(None),
+    start_date: Optional[datetime.date] = Query(None),
+    end_date: Optional[datetime.date] = Query(None),
     limit: int = Query(100, le=500),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -355,15 +361,15 @@ def list_violations(
          .join(PolicyRule, PolicyViolation.rule_id == PolicyRule.id)
          .filter(PolicyViolation.user_id == current_user.id))
     scope_ids = accounts_in_scope(db, current_user, account_id, entity_id)
-    if scope_ids is not None:
-        q = q.filter(PolicyViolation.account_id.in_(scope_ids))
+    q = scope_findings(q, PolicyViolation, scope_ids, start_date, end_date)
     if status_filter and status_filter != "all":
         q = q.filter(PolicyViolation.status == status_filter)
     if rule_id:
         q = q.filter(PolicyViolation.rule_id == rule_id)
 
     severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    rows = q.limit(limit * 3).all()
+    sev = case({"critical": 0, "high": 1, "medium": 2, "low": 3}, value=PolicyViolation.severity, else_=9)
+    rows = q.order_by(sev, PolicyViolation.amount_paise.desc().nullslast()).limit(limit * 3).all()
     rows.sort(key=lambda pair: (severity_rank.get(pair[0].severity, 9),
                                 -(pair[0].amount_paise or 0)))
 

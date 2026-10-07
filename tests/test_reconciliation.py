@@ -68,7 +68,7 @@ def test_acceptance_1_clean_run(db_session):
     db_session.commit()
 
     engine = ReconciliationMatchingEngine(db_session, user.id, account.id, date(2026, 1, 1), date(2026, 1, 31))
-    run = engine.execute_run(force=True)
+    run = engine.execute_run(force=True, book_opening_paise=0)
 
     assert run.residual_paise == 0
     assert run.verdict == RunVerdictEnum.RECONCILED_CLEAN.value
@@ -89,10 +89,13 @@ def test_acceptance_2_outstanding_cheque(db_session):
         row_index=1, source_row_hash="hash_outstanding"
     )
     db_session.add(b_entry)
+    db_session.add(Transaction(
+        id=uuid.uuid4(), user_id=user.id, account_id=account.id, txn_date=date(2025, 12, 31),
+        direction=Direction.CREDIT, source_type=SourceType.STATEMENT, debit_paise="0", credit_paise="0", balance_paise="0"))
     db_session.commit()
 
     engine = ReconciliationMatchingEngine(db_session, user.id, account.id, date(2026, 1, 1), period_to)
-    run = engine.execute_run()
+    run = engine.execute_run(book_opening_paise=0)
 
     assert run.residual_paise == 0
     assert run.verdict == RunVerdictEnum.RECONCILED_WITH_EXCEPTIONS.value
@@ -115,10 +118,13 @@ def test_acceptance_3_stale_cheque(db_session):
         row_index=1, source_row_hash="hash_stale"
     )
     db_session.add(b_entry)
+    db_session.add(Transaction(
+        id=uuid.uuid4(), user_id=user.id, account_id=account.id, txn_date=date(2025, 8, 31),
+        direction=Direction.CREDIT, source_type=SourceType.STATEMENT, debit_paise="0", credit_paise="0", balance_paise="0"))
     db_session.commit()
 
     engine = ReconciliationMatchingEngine(db_session, user.id, account.id, date(2025, 9, 1), period_to)
-    run = engine.execute_run()
+    run = engine.execute_run(book_opening_paise=0)
 
     assert run.residual_paise == 0
     assert run.verdict == RunVerdictEnum.RECONCILED_WITH_EXCEPTIONS.value
@@ -147,7 +153,7 @@ def test_acceptance_4_bank_charge(db_session):
     db_session.commit()
 
     engine = ReconciliationMatchingEngine(db_session, user.id, account.id, date(2026, 1, 1), date(2026, 1, 31))
-    run = engine.execute_run()
+    run = engine.execute_run(book_opening_paise=0)
 
     # Unbooked bank charge is incorporated into computed bank position with exception flag set
     assert run.residual_paise == 0
@@ -182,7 +188,7 @@ def test_acceptance_5_unexplained_difference(db_session):
     db_session.commit()
 
     engine = ReconciliationMatchingEngine(db_session, user.id, account.id, date(2026, 1, 1), date(2026, 1, 31))
-    run = engine.execute_run(force=True)
+    run = engine.execute_run(force=True, book_opening_paise=0)
 
     assert run.residual_paise != 0
     assert run.verdict == RunVerdictEnum.UNRECONCILED.value
@@ -208,11 +214,16 @@ def test_acceptance_7_reference_mismatch(db_session):
     db_session.commit()
 
     engine = ReconciliationMatchingEngine(db_session, user.id, account.id, date(2026, 1, 1), date(2026, 1, 31))
-    run = engine.execute_run()
+    # Bank balance 0 after a 120.00 debit: the books opened at 120.00 too.
+    run = engine.execute_run(book_opening_paise=12000)
 
     assert len(run.matches) == 1
     assert run.matches[0].status == "pending_review"
-    assert run.matches[0].reason == "amount_mismatch_on_reference"
+    assert run.matches[0].tier == "amount_difference"
+    diff = [it for it in run.items if it.brs_category == "amount_difference"]
+    assert len(diff) == 1 and diff[0].amount_paise == 2000 and diff[0].direction == "subtract"
+    assert run.residual_paise == 0
+    assert run.verdict == RunVerdictEnum.RECONCILED_WITH_EXCEPTIONS.value
 
 
 def test_acceptance_9_blocked_run(db_session):
@@ -231,5 +242,5 @@ def test_acceptance_9_blocked_run(db_session):
     with pytest.raises(ValueError, match="Unreconciled statements present"):
         engine.execute_run(force=False)
 
-    run = engine.execute_run(force=True)
+    run = engine.execute_run(force=True, book_opening_paise=0)
     assert run.forced is True

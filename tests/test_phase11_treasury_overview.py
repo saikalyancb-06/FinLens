@@ -202,7 +202,7 @@ class TestPhase11TreasuryOverview:
         })
 
         # Run reconciliation
-        r_run = client.post("/v1/reconciliation/runs", json={"period_from": "2026-01-01", "period_to": "2026-01-31", "force": True}, headers=headers)
+        r_run = client.post("/v1/reconciliation/runs", json={"book_opening": "0", "period_from": "2026-01-01", "period_to": "2026-01-31", "force": True}, headers=headers)
         run_id = r_run.json()["run_id"]
 
         # Query Treasury Overview

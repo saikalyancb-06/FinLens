@@ -24,6 +24,10 @@ os.environ["FX_REFRESH_ENABLED"] = "false"
 # test database on its own schedule. Its jobs are tested directly instead
 # (tests/b2b/test_maintenance.py).
 os.environ["B2B_MAINTENANCE_ENABLED"] = "false"
+# Mailbox routing must not call Microsoft's tenant lookup from tests.
+os.environ["MAILBOX_REALM_LOOKUP"] = "false"
+# Tests drive scans themselves; the automatic first scan has its own test.
+os.environ["MAILBOX_SCAN_ON_CONNECT"] = "false"
 
 from sqlalchemy import create_engine  # noqa: E402
 

@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import hashlib
 from datetime import datetime, date
 
@@ -21,7 +22,10 @@ from app.models.reconciliation import (
     ReconciliationMatch, ReconciliationItem, MatchStatusEnum, RunVerdictEnum
 )
 from app.services.books_importer import BooksImporterService, parse_amount_to_paise, compute_row_hash
-from app.services.reconciliation_engine import ReconciliationMatchingEngine
+from app.services.reconciliation_engine import (
+    ReconciliationMatchingEngine, BookOpeningRequired, SUPPORTED_ENGINE_VERSIONS, rebuild_run,
+)
+from app.api.review_rows import bank_row, book_row
 from app.utils.security import get_current_user
 
 router = APIRouter(prefix="/v1/reconciliation", tags=["Bank Reconciliation"])
@@ -43,6 +47,10 @@ class ConfirmMappingRequest(BaseModel):
     save_as_template: bool = False
     ledger_convention: Optional[str] = "DEBIT_IN"  # "DEBIT_IN" (Tally style: Debit->In, Credit->Out) or "STANDARD" (Normal CSV: Debit->Out, Credit->In)
     rows: List[dict]
+    # Book balance at the start of the file, typed by the user. Rupees, e.g.
+    # "1,25,000.50"; negative for an overdraft. Optional: the file's own
+    # "Opening Balance" row or the previous reconciliation is used otherwise.
+    book_opening: Optional[str] = None
 
 
 
@@ -53,6 +61,9 @@ class CreateRunRequest(BaseModel):
     period_to: date
     import_batch_id: Optional[UUID] = None
     force: bool = False
+    # Book opening balance for period_from, in rupees (negative = overdraft).
+    # Overrides the previous run's closing and the ledger file's opening row.
+    book_opening: Optional[str] = None
 
 
 
@@ -122,78 +133,105 @@ def confirm_books_import(
 
     mapping = payload.column_mapping
     stated_closing_paise = None
+    file_opening_paise = None
     min_date, max_date = None, None
     tot_in, tot_out = 0, 0
+    skipped_rows: List[int] = []
+    flipped_rows: List[int] = []
+    both_sides_rows: List[int] = []
+    pending_entries = []
+
+    def _cell(field_name):
+        col = mapping.get(field_name)
+        return row.get(col) if col else None
+
+    def _text(field_name):
+        v = _cell(field_name)
+        return "" if v is None or str(v).strip().lower() in ("nan", "none") else str(v).strip()
 
     for idx, row in enumerate(payload.rows, start=1):
-        row_str = " ".join(str(v) for v in row.values()).lower()
-        val_in = parse_amount_to_paise(row.get(mapping.get("money_in", "")))
-        val_out = parse_amount_to_paise(row.get(mapping.get("money_out", "")))
+        val_in = parse_amount_to_paise(_cell("money_in"))
+        val_out = parse_amount_to_paise(_cell("money_out"))
 
-        # Handle convention:
-        # DEBIT_IN (Tally style): Debit column mapped to money_in is Money In, Credit column mapped to money_out is Money Out
-        # STANDARD (Normal CSV): Debit column mapped to money_in is Money Out, Credit column mapped to money_out is Money In
+        # Convention:
+        # DEBIT_IN (Tally style): the Debit column is money into the bank account.
+        # STANDARD (bank-statement style): the Debit column is money out.
         if payload.ledger_convention == "STANDARD":
-            m_in = val_out
-            m_out = val_in
+            m_in, m_out = val_out, val_in
         else:
-            m_in = val_in
-            m_out = val_out
+            m_in, m_out = val_in, val_out
 
-        if "closing balance" in row_str or "closing" in row_str:
-            raw_closing_val = row.get(mapping.get("money_in", "")) or row.get(mapping.get("money_out", "")) or row.get(mapping.get("instrument_no", ""))
-            parsed_closing = parse_amount_to_paise(raw_closing_val)
-            if parsed_closing > 0:
-                stated_closing_paise = parsed_closing
-            elif m_in > 0:
-                stated_closing_paise = m_in
-            elif m_out > 0:
-                stated_closing_paise = m_out
-            continue
-        if m_in > 0 and m_out > 0:
-            m_out = 0  # Enforce check single direction constraint
-
-        if m_in == 0 and m_out == 0:
-            continue
-
-        raw_date = str(row.get(mapping.get("entry_date", ""), "")).strip()
+        raw_date = _text("entry_date")
         e_date = None
-        for fmt in ["%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%d-%b-%Y"]:
+        for fmt in ["%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%d-%b-%Y", "%d-%b-%y",
+                    "%d/%m/%y", "%d-%m-%y", "%d %b %Y", "%Y-%m-%d %H:%M:%S"]:
             try:
                 e_date = datetime.strptime(raw_date, fmt).date()
                 break
             except Exception:
                 pass
-        if not e_date:
+
+        # Balance rows are recognised by their label, and only when the row is
+        # not a dated transaction: "Loan closing charges" is a real entry.
+        label = " ".join(str(v) for v in row.values() if v is not None).lower()
+        if e_date is None and re.search(r"opening\s*bal", label):
+            file_opening_paise = m_in - m_out
+            continue
+        if e_date is None and re.search(r"closing\s*bal", label):
+            stated_closing_paise = m_in - m_out
             continue
 
-        if min_date is None or e_date < min_date:
-            min_date = e_date
-        if max_date is None or e_date > max_date:
-            max_date = e_date
+        if m_in == 0 and m_out == 0:
+            continue
+        if e_date is None:
+            skipped_rows.append(idx)
+            continue
+        # A negative receipt is a payment and vice versa.
+        if m_in < 0 or m_out < 0:
+            flipped_rows.append(idx)
+            m_in, m_out = (max(m_in, 0) + max(-m_out, 0)), (max(m_out, 0) + max(-m_in, 0))
+        if m_in > 0 and m_out > 0:
+            both_sides_rows.append(idx)
+            continue
 
+        min_date = e_date if min_date is None or e_date < min_date else min_date
+        max_date = e_date if max_date is None or e_date > max_date else max_date
         tot_in += m_in
         tot_out += m_out
-
-        b_entry = BookEntry(
+        pending_entries.append(BookEntry(
             user_id=current_user.id,
             account_id=account.id,
             import_batch_id=batch.id,
             entry_date=e_date,
-            voucher_no=str(row.get(mapping.get("voucher_no", ""), "")),
-            voucher_type=str(row.get(mapping.get("voucher_type", ""), "")),
-            narration=str(row.get(mapping.get("narration", ""), "")),
-            party_name=str(row.get(mapping.get("party_name", ""), "")),
-            instrument_no=str(row.get(mapping.get("instrument_no", ""), "")),
+            voucher_no=_text("voucher_no") or None,
+            voucher_type=_text("voucher_type") or None,
+            narration=_text("narration"),
+            party_name=_text("party_name") or None,
+            instrument_no=_text("instrument_no") or None,
             money_in_paise=m_in,
             money_out_paise=m_out,
             row_index=idx,
-            source_row_hash=compute_row_hash(row)
-        )
-        db.add(b_entry)
+            source_row_hash=compute_row_hash({**row, "__row__": idx}),
+        ))
+
+    if both_sides_rows:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=(
+            "These rows have an amount in both the money-in and money-out columns, so their "
+            f"direction is ambiguous: rows {both_sides_rows[:20]}. Fix the file and upload again."))
+    db.add_all(pending_entries)
+
+    typed_opening = None
+    if payload.book_opening not in (None, ""):
+        typed_opening = parse_amount_to_paise(payload.book_opening)
+    if typed_opening is not None:
+        batch.book_opening_paise, batch.book_opening_source = typed_opening, "manual"
+    elif file_opening_paise is not None:
+        batch.book_opening_paise, batch.book_opening_source = file_opening_paise, "ledger_file"
 
     batch.period_from = min_date
     batch.period_to = max_date
+    batch.row_count = len(pending_entries)
     batch.book_closing_paise = stated_closing_paise if stated_closing_paise is not None else (tot_in - tot_out)
     db.commit()
     return {
@@ -201,7 +239,11 @@ def confirm_books_import(
         "batch_id": batch.id,
         "row_count": batch.row_count,
         "period_from": min_date.isoformat() if min_date else None,
-        "period_to": max_date.isoformat() if max_date else None
+        "period_to": max_date.isoformat() if max_date else None,
+        "book_opening_paise": batch.book_opening_paise,
+        "book_opening_source": batch.book_opening_source,
+        "skipped_rows": skipped_rows,
+        "negative_amount_rows": flipped_rows,
     }
 
 
@@ -286,17 +328,11 @@ def create_reconciliation_run(
         if not account:
             raise HTTPException(status_code=404, detail="Specified bank account not found or does not belong to user")
     else:
-        account = db.query(Account).filter(Account.user_id == current_user.id).first()
-        if not account:
-            account = Account(
-                id=uuid.uuid4(),
-                user_id=current_user.id,
-                bank_code="HDFC",
-                account_number_masked="****1234",
-                account_type="CURRENT"
-            )
-            db.add(account)
-            db.flush()
+        # Only unambiguous when the user has exactly one account. Never invent one.
+        owned = db.query(Account).filter(Account.user_id == current_user.id).limit(2).all()
+        if len(owned) != 1:
+            raise HTTPException(status_code=400, detail="account_id is required: choose the bank account to reconcile.")
+        account = owned[0]
 
 
 
@@ -328,8 +364,12 @@ def create_reconciliation_run(
         period_from=payload.period_from,
         period_to=payload.period_to
     )
+    typed_opening = None
+    if payload.book_opening not in (None, ""):
+        typed_opening = parse_amount_to_paise(payload.book_opening)
     try:
-        run = engine.execute_run(import_batch_id=batch_id, force=payload.force)
+        run = engine.execute_run(import_batch_id=batch_id, force=payload.force,
+                                 book_opening_paise=typed_opening)
         return {
             "run_id": run.id,
             "verdict": run.verdict,
@@ -337,8 +377,14 @@ def create_reconciliation_run(
             "residual_paise": run.residual_paise,
             "matched_count": run.matched_count,
             "unmatched_bank_count": run.unmatched_bank_count,
-            "unmatched_book_count": run.unmatched_book_count
+            "unmatched_book_count": run.unmatched_book_count,
+            "pending_review_count": run.pending_review_count,
+            "book_opening_paise": run.book_opening_paise,
+            "book_opening_source": run.book_opening_source,
         }
+    except BookOpeningRequired as bo:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(bo), headers={"X-Error-Code": BookOpeningRequired.code})
     except ValueError as ve:
         logger.warning(f"Validation error in reconciliation run: {ve}")
         raise HTTPException(status_code=400, detail=str(ve))
@@ -362,7 +408,7 @@ def get_reconciliation_run(
     if not run:
         raise HTTPException(status_code=404, detail="Reconciliation run not found")
 
-    if getattr(run, "engine_version", None) != "v2.0":
+    if getattr(run, "engine_version", None) not in SUPPORTED_ENGINE_VERSIONS:
         raise HTTPException(status_code=400, detail="Outdated engine version for reconciliation run. Please re-run matching.")
 
     items = db.query(ReconciliationItem).filter(ReconciliationItem.run_id == run.id).all()
@@ -389,17 +435,18 @@ def get_reconciliation_run(
 
     timing_count = len([it for it in items if getattr(it.side, "value", it.side) == "book"])
     bank_only_cnt = len([it for it in items if getattr(it.side, "value", it.side) == "bank"])
-    amount_mismatch_cnt = len([m for m in matches if m.status == "AMOUNT_MISMATCH" or m.tier == "priority_5_amount_mismatch"])
-    date_mismatch_cnt = len([m for m in matches if m.status == "DATE_MISMATCH" or m.tier == "priority_4_date_mismatch"])
-    dup_cnt = len([m for m in matches if m.status == "DUPLICATE"])
+    active = [m for m in matches if m.status != MatchStatusEnum.REJECTED.value]
+    log = debug_log if isinstance(debug_log, list) else []
+    active_ids = {str(m.id) for m in active}
+    amount_mismatch_cnt = len([it for it in items if it.brs_category == "amount_difference"])
+    date_mismatch_cnt = len([d for d in log if d.get("match_status") == "DATE_MISMATCH"
+                             and d.get("match_id", "") in active_ids])
+    dup_cnt = len([it for it in items if (it.brs_category or "").startswith("duplicate_ledger")])
 
-    # Calculate opening balance and net movement for report display
-    has_explicit = bool(run.import_batch and run.import_batch.book_opening_paise is not None and run.import_batch.book_opening_paise != 0)
-    
-    # Opening balance: use explicit book opening if present, else run's stored book_opening_paise (bank opening fallback)
-    opening_bal_paise = run.import_batch.book_opening_paise if has_explicit else run.book_opening_paise
-    
-    # Net movement: book_closing_paise - opening_bal_paise
+    # Opening is whatever the run actually used (v3 never guesses it from the
+    # bank); v2 runs stored the bank-derived figure in the same column.
+    opening_bal_paise = run.book_opening_paise or 0
+    has_explicit = getattr(run, "book_opening_source", None) is not None
     net_mov_paise = run.book_closing_paise - opening_bal_paise
 
     return {
@@ -410,6 +457,9 @@ def get_reconciliation_run(
         "opening_balance_paise": opening_bal_paise,
         "net_movement_paise": net_mov_paise,
         "has_book_opening": has_explicit,
+        "book_opening_source": getattr(run, "book_opening_source", None),
+        "carried_from_run_id": getattr(run, "carried_from_run_id", None),
+        "status": run.status,
         "bank_closing_paise": run.bank_closing_paise,
         "computed_bank_closing_paise": run.computed_bank_closing_paise,
         "residual_paise": run.residual_paise,
@@ -469,25 +519,76 @@ def get_run_matches(
     if status:
         query = query.filter(ReconciliationMatch.status == status)
 
-    matches = query.all()
+    return [_match_out(m) for m in query.all()]
 
-    res = []
-    for m in matches:
-        res.append({
-            "match_id": m.id,
-            "tier": m.tier,
-            "confidence": m.confidence,
-            "status": m.status,
-            "reason": m.reason,
-            "lines": [
-                {
-                    "id": line.id,
-                    "bank_txn_id": line.bank_txn_id,
-                    "book_entry_id": line.book_entry_id
-                } for line in m.lines
-            ]
-        })
-    return res
+
+def _account_name(acc: Optional[Account]) -> Optional[str]:
+    if acc is None:
+        return None
+    return acc.account_label or f"{acc.bank_code} {acc.account_number_masked}".strip()
+
+
+def _match_out(m: ReconciliationMatch, run: Optional[ReconciliationRun] = None,
+               account: Optional[Account] = None) -> dict:
+    """A match with its book and bank rows in the Manual Review row shape."""
+    rows = []
+    for line in m.lines:
+        if line.book_entry_id and line.book_entry is not None:
+            rows.append(book_row(line.book_entry))
+        if line.bank_txn_id and line.bank_transaction is not None:
+            rows.append(bank_row(line.bank_transaction))
+    # Books first, then bank: read as "this entry in the books ... cleared as this".
+    rows.sort(key=lambda r: (r["side"] != "books", str(r["txn_date"])))
+    books = sum(r["amount"] for r in rows if r["side"] == "books")
+    bank = sum(r["amount"] for r in rows if r["side"] == "bank")
+    out = {
+        "match_id": m.id,
+        "run_id": m.run_id,
+        "tier": m.tier,
+        "confidence": m.confidence,
+        "status": m.status,
+        "reason": m.reason,
+        "difference": round(bank - books, 2),
+        "lines": [
+            {"id": line.id, "bank_txn_id": line.bank_txn_id, "book_entry_id": line.book_entry_id}
+            for line in m.lines
+        ],
+        "rows": rows,
+    }
+    if run is not None:
+        out.update(period_from=run.period_from, period_to=run.period_to,
+                   account_id=run.account_id, account_name=_account_name(account))
+    return out
+
+
+@router.get("/review-candidates")
+def get_review_candidates(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Pending BRS match candidates for the Review Queue.
+
+    One list across every account: the latest run of each account is that
+    account's current BRS, so its pending pairs are the open questions. (The
+    queue used to read only the newest run overall, so a second account's
+    candidates never appeared.)
+    """
+    runs = (db.query(ReconciliationRun)
+            .filter(ReconciliationRun.user_id == current_user.id)
+            .order_by(ReconciliationRun.created_at.desc()).all())
+    latest = {}
+    for r in runs:
+        latest.setdefault(r.account_id, r)
+    accounts = {a.id: a for a in db.query(Account).filter(Account.id.in_(list(latest))).all()} if latest else {}
+    out = []
+    for acc_id, run in latest.items():
+        pending = (db.query(ReconciliationMatch)
+                   .filter(ReconciliationMatch.run_id == run.id,
+                           ReconciliationMatch.status == MatchStatusEnum.PENDING_REVIEW.value)
+                   .all())
+        out.extend(_match_out(m, run, accounts.get(acc_id)) for m in pending)
+    out.sort(key=lambda x: (str(x["rows"][0]["txn_date"]) if x["rows"] else ""), reverse=True)
+    return out
 
 
 @router.post("/matches/{match_id}/confirm")
@@ -508,7 +609,10 @@ def confirm_match(
     match.reviewed_by = current_user.id
     match.reviewed_at = datetime.utcnow()
     db.commit()
-    return {"status": "success"}
+    # Recompute the bridge so totals, items and verdict reflect the decision.
+    run = rebuild_run(db, match.run)
+    return {"status": "success", "verdict": run.verdict, "residual_paise": run.residual_paise,
+            "pending_review_count": run.pending_review_count}
 
 
 @router.post("/matches/{match_id}/reject")
@@ -529,7 +633,10 @@ def reject_match(
     match.reviewed_by = current_user.id
     match.reviewed_at = datetime.utcnow()
     db.commit()
-    return {"status": "success"}
+    # Recompute the bridge so totals, items and verdict reflect the decision.
+    run = rebuild_run(db, match.run)
+    return {"status": "success", "verdict": run.verdict, "residual_paise": run.residual_paise,
+            "pending_review_count": run.pending_review_count}
 
 
 @router.post("/items/{item_id}/classify")
@@ -602,16 +709,26 @@ def export_brs_report(
         cat_l = (cat or "").lower()
         side_l = (side or "").lower()
         dir_l  = (direction or "").lower()
-        if "unpresented" in cat_l or "cheque" in cat_l:
-            return "Unpresented Cheque"
+        if "unpresented" in cat_l:
+            return "Payment in Books, Not Yet in Bank"
         if "uncleared" in cat_l or "deposit_in_transit" in cat_l:
-            return "Uncleared Deposit"
+            return "Receipt in Books, Not Yet in Bank"
+        if "dishonoured" in cat_l:
+            return "Dishonoured / Returned Cheque"
+        if "duplicate_ledger" in cat_l:
+            return "Possible Duplicate Ledger Entry"
+        if cat_l == "amount_difference":
+            return "Amount Differs Between Books and Bank"
+        if "standing_instruction" in cat_l:
+            return "Standing Instruction / EMI Not in Books"
         if "interest" in cat_l:
             return "Interest Credit"
         if "direct_credit" in cat_l:
             return "Direct Credit"
         if "direct_debit" in cat_l or "bank_charge" in cat_l:
             return "Bank Charge / Debit"
+        if cat_l == "unmatched_bank_transaction":
+            return "In Bank, Not in Books"
         return cat.replace("_", " ").title() if cat else "Other"
 
     # ── Collect data ─────────────────────────────────────────────────────────
@@ -629,12 +746,7 @@ def export_brs_report(
     else:
         residual_note = "Fully reconciled — no unexplained difference"
 
-    has_explicit = bool(
-        run.import_batch
-        and run.import_batch.book_opening_paise is not None
-        and run.import_batch.book_opening_paise != 0
-    )
-    opening_paise = run.import_batch.book_opening_paise if has_explicit else run.book_opening_paise
+    opening_paise = run.book_opening_paise or 0
     net_mov_paise = (run.book_closing_paise or 0) - (opening_paise or 0)
 
     # ── Document setup ────────────────────────────────────────────────────────

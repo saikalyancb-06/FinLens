@@ -67,7 +67,7 @@ def test_ui_report_clean_reconciliation(db):
     db.commit()
 
     engine = ReconciliationMatchingEngine(db, user.id, account.id, date(2026, 3, 1), date(2026, 3, 31))
-    run = engine.execute_run()
+    run = engine.execute_run(book_opening_paise=0)
 
     book_items = [i for i in run.items if i.side == "book"]
     bank_items = [i for i in run.items if i.side == "bank"]
@@ -114,7 +114,8 @@ def test_ui_report_test_2_exact_counts_and_no_duplication(db):
     db.commit()
 
     engine = ReconciliationMatchingEngine(db, user.id, account.id, date(2026, 3, 1), date(2026, 3, 31))
-    run = engine.execute_run()
+    # Books and bank both opened at 43,000.00 (bank 52,900 after the 9,900 interest).
+    run = engine.execute_run(book_opening_paise=4300000)
 
     book_items = [i for i in run.items if i.side == "book"]
     bank_items = [i for i in run.items if i.side == "bank"]

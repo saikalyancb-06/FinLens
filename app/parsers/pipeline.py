@@ -109,7 +109,9 @@ class TransactionParsingPipeline:
 
         try:
             if ext == ".pdf":
-                result = self.pdf_parser.parse(file_path, password=pdf_password)
+                result = self._parse_pdf_verified(file_path, pdf_password)
+                if result is None:
+                    result = self.pdf_parser.parse(file_path, password=pdf_password)
             elif ext in (".csv", ".xls", ".xlsx"):
                 result = self.excel_csv_parser.parse(file_path)
             elif ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"):
@@ -122,6 +124,51 @@ class TransactionParsingPipeline:
 
         logger.info(f"[Pipeline] Extracted {len(result)} raw row(s) from '{os.path.basename(file_path)}'")
         return result
+
+    def _parse_pdf_verified(self, file_path: str, pdf_password: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+        """Bank PDFs through the balance-verified extractor first.
+
+        The same extractor the statement API uses (app/b2b/consolidate). Its rows
+        are accepted only when EVERY consecutive pair reconciles
+        (previous balance +/- amount = balance), so it can only replace the
+        legacy parser where it is provably right. On an Axis current-account
+        statement the legacy parser recorded 51 receipts as payments (debits
+        2.80 cr against a true 1.48 cr) and attached wrapped narration lines to
+        the wrong rows; this reads all 348 rows and reconciles to the paisa.
+        Anything it cannot reconcile falls through to the legacy parser
+        unchanged.
+        """
+        try:
+            from app.b2b.consolidate.extract import CREDIT, continuity_score, extract_pdf
+            from app.parsers.normalizer import build_normalized_transaction
+            ex = extract_pdf(file_path, password=pdf_password)
+            ok, checked = continuity_score(ex.rows)
+        except Exception as exc:  # noqa: BLE001 - the legacy parser is the fallback
+            logger.info(f"[Pipeline] verified extractor declined '{os.path.basename(file_path)}': {exc}")
+            return None
+        if not ex.rows or checked < 1 or ok != checked:
+            return None
+        rows: List[Dict[str, Any]] = []
+        for r in ex.rows:
+            amount = r.amount_paise / 100.0
+            credit = r.direction == CREDIT
+            rows.append(build_normalized_transaction(
+                date=r.date.isoformat(),
+                description=r.narration,
+                debit=0.0 if credit else amount,
+                credit=amount if credit else 0.0,
+                amount=amount,
+                balance=(r.balance_paise / 100.0) if r.balance_paise is not None else 0.0,
+                transaction_type="credit" if credit else "debit",
+                reference_number=r.reference or "",
+                raw_text=r.narration,
+                source_method="verified_extractor",
+            ))
+        # The legacy parser publishes a printed closing balance this way.
+        self.pdf_parser.last_statement_closing = (
+            ex.closing_paise / 100.0 if ex.closing_paise is not None else None)
+        logger.info(f"[Pipeline] verified extractor: {len(rows)} rows, {checked} balance checks passed")
+        return rows
 
     # ──────────────────────────────────────────────────────────────────────────
     # Accuracy report

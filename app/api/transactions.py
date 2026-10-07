@@ -27,6 +27,24 @@ from app.currency.service import (
 router = APIRouter(prefix="/transactions", tags=["Transactions"])
 
 
+def display_category_label(Category, Prediction):
+    """SQL for the category label the Transactions table displays.
+
+    Mirrors the table cell `t.category || t.purpose || t.final_category`:
+    the tree category, else the flat (legacy) label, else the linked category
+    name, else the prediction, else "Uncategorized" (final_category's default).
+    Used by the ?category= filter and by /analytics/filters so the dropdown,
+    the filter and the column are one vocabulary.
+    """
+    return func.coalesce(
+        func.nullif(Transaction.category, ""),
+        func.nullif(Transaction.legacy_category, ""),
+        Category.name,
+        Prediction.predicted_category,
+        "Uncategorized",
+    )
+
+
 def build_transaction_response(
     tx: Transaction,
     display: "DisplayBlock | None" = None,
@@ -383,23 +401,19 @@ def get_transactions_list(
         except ValueError:
             pass
 
-    # Category is resolved through Category.name / Prediction.predicted_category,
-    # so it is filtered in SQL via those joins rather than in Python. Filtering
-    # after .offset().limit() silently truncated each page — a request for page 1
-    # of one category returned only however many of the first `limit` rows
-    # happened to match, and page 2 skipped rows that were never shown.
+    # Category filters on the label the Category column SHOWS
+    # (`category || purpose || final_category` in the table), resolved in SQL by
+    # display_category_label(). It used to match the flat Category.name /
+    # predicted category instead, so choosing "Rent Payment" listed rows the
+    # column labelled "Transfers". /analytics/filters offers exactly these
+    # labels, so every option matches what it says.
     if category:
         from app.models.category import Category
         from app.models.prediction import Prediction
         query = (
             query.outerjoin(Category, Category.id == Transaction.category_id)
                  .outerjoin(Prediction, Prediction.transaction_id == Transaction.id)
-                 .filter(
-                     or_(
-                         func.lower(Category.name) == category.lower(),
-                         func.lower(Prediction.predicted_category) == category.lower(),
-                     )
-                 )
+                 .filter(func.lower(display_category_label(Category, Prediction)) == category.strip().lower())
         )
 
     # Counted on the fully-filtered query but BEFORE offset/limit, so it is the

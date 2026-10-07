@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.account import Account
@@ -44,10 +44,24 @@ def entity_scope(entity_id: Any):
 
     Returns a SQLAlchemy predicate; use it inside `.filter(...)`.
     """
+    # The account's link wins whenever the account has one. Moving an account
+    # to another entity in Bank Master does not rewrite the copies on its old
+    # rows, so "row says E1 OR account says E2" counted those rows under BOTH
+    # entities and the per-entity figures summed to more than the total. The
+    # row's own copy is consulted only when its account has no entity (or the
+    # row has no account) — the case the copy exists for.
     return or_(
-        Transaction.entity_id == entity_id,
         Transaction.account_id.in_(
             select(Account.id).where(Account.entity_id == entity_id)
+        ),
+        and_(
+            Transaction.entity_id == entity_id,
+            or_(
+                Transaction.account_id.is_(None),
+                Transaction.account_id.in_(
+                    select(Account.id).where(Account.entity_id.is_(None))
+                ),
+            ),
         ),
     )
 
@@ -79,3 +93,47 @@ def accounts_in_scope(
     if entity_id:
         q = q.filter(Account.entity_id == entity_id)
     return [row[0] for row in q.all()]
+
+
+def scope_findings(query, model, scope_ids, date_from=None, date_to=None):
+    """Narrow an AnomalyFinding / PolicyViolation query to the filter bar.
+
+    One definition for every place findings are counted or listed — the
+    dashboard tiles, the panel headers and the lists under them — so the
+    header can never say 12 above a list of 9.
+
+    * Account scope: findings on the selected accounts only. A finding that
+      names no account cannot be attributed to the selection, so once a scope
+      is set it is left out (an empty scope matches nothing).
+    * Dates: findings that happened inside the period. A finding with no date
+      is not tied to any period and is kept.
+    """
+    if scope_ids is not None:
+        query = query.filter(model.account_id.in_(scope_ids)) if scope_ids else query.filter(False)
+    if date_from is not None:
+        query = query.filter(or_(model.occurred_on.is_(None), model.occurred_on >= date_from))
+    if date_to is not None:
+        query = query.filter(or_(model.occurred_on.is_(None), model.occurred_on <= date_to))
+    return query
+
+
+def finding_key(row) -> tuple:
+    """What makes two findings the same finding (scans can write one twice)."""
+    rule = getattr(row, "rule_id", None)
+    kind = getattr(row, "anomaly_type", None)
+    return (str(rule or kind), str(row.transaction_id) if row.transaction_id else None,
+            str(row.occurred_on), row.amount_paise,
+            getattr(row, "title", None) if kind is not None else getattr(row, "detail", None))
+
+
+def count_distinct_findings(rows) -> dict:
+    """{severity: count} over distinct findings, plus 'total'."""
+    seen, out = set(), {}
+    for r in rows:
+        k = finding_key(r)
+        if k in seen:
+            continue
+        seen.add(k)
+        out[r.severity] = out.get(r.severity, 0) + 1
+    out["total"] = sum(v for k, v in out.items() if k != "total")
+    return out

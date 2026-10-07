@@ -52,7 +52,8 @@ class OAuthClient(abc.ABC):
     # ---- flow ------------------------------------------------------------
 
     @abc.abstractmethod
-    def authorization_url(self, state: str, redirect_uri: Optional[str] = None) -> str: ...
+    def authorization_url(self, state: str, redirect_uri: Optional[str] = None,
+                          login_hint: Optional[str] = None) -> str: ...
 
     @abc.abstractmethod
     async def exchange_code(self, code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]: ...

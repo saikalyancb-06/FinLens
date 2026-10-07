@@ -145,6 +145,11 @@ class DeduplicationEngine:
                         days_diff = abs((t_a.txn_date - t_b.txn_date).days)
                         if days_diff > 3:
                             continue
+                        # Same reference but a different running balance: two rows
+                        # (e.g. a payment and its reversal-and-repay), not one.
+                        if (t_a.balance_paise is not None and t_b.balance_paise is not None
+                                and t_a.balance_paise != t_b.balance_paise):
+                            continue
 
                         kept_txn, dup_txn = select_kept_and_duplicate(t_a, t_b)
 
@@ -201,6 +206,15 @@ class DeduplicationEngine:
 
                     # Intra-statement check: Never auto-merge distinct rows within the same uploaded statement file in Tier 2
                     if t_a.statement_id and t_a.statement_id == t_b.statement_id:
+                        continue
+
+                    # Different running balances on the same account mean two
+                    # different rows of the bank's ledger, whatever the
+                    # narration says: a duplicate repeats the row INCLUDING its
+                    # balance. (Same-day repeat purchases were being superseded
+                    # here, understating every total.)
+                    if (t_a.balance_paise is not None and t_b.balance_paise is not None
+                            and t_a.balance_paise != t_b.balance_paise):
                         continue
 
                     days_diff = abs((t_a.txn_date - t_b.txn_date).days)

@@ -58,7 +58,7 @@ class TestPhase10ImmutableHistory:
 
         # 1. First Run
         payload = {
-            "period_from": "2026-01-01",
+            "book_opening": "0", "period_from": "2026-01-01",
             "period_to": "2026-01-31",
             "force": True
         }
@@ -93,7 +93,7 @@ class TestPhase10ImmutableHistory:
         headers = register_and_login(client, "export_stability@phase10.test")
 
         payload = {
-            "period_from": "2026-01-01",
+            "book_opening": "0", "period_from": "2026-01-01",
             "period_to": "2026-01-31",
             "force": True
         }
@@ -142,7 +142,7 @@ class TestPhase10ImmutableHistory:
 
         # Initiate run
         payload = {
-            "period_from": "2026-01-01",
+            "book_opening": "0", "period_from": "2026-01-01",
             "period_to": "2026-01-31",
             "force": True
         }
@@ -187,7 +187,7 @@ class TestPhase10ImmutableHistory:
         headers_a = register_and_login(client, "usera_hist@phase10.test")
         headers_b = register_and_login(client, "userb_hist@phase10.test")
 
-        r_a = client.post("/v1/reconciliation/runs", json={"period_from": "2026-01-01", "period_to": "2026-01-31", "force": True}, headers=headers_a)
+        r_a = client.post("/v1/reconciliation/runs", json={"book_opening": "0", "period_from": "2026-01-01", "period_to": "2026-01-31", "force": True}, headers=headers_a)
         run_a_id = r_a.json()["run_id"]
 
         # User B attempts access
@@ -210,7 +210,7 @@ class TestPhase10ImmutableHistory:
             try:
                 r = client.post(
                     "/v1/reconciliation/runs",
-                    json={"period_from": "2026-01-01", "period_to": "2026-01-31", "force": True},
+                    json={"book_opening": "0", "period_from": "2026-01-01", "period_to": "2026-01-31", "force": True},
                     headers=headers
                 )
                 results.append(r.status_code)
@@ -235,7 +235,7 @@ class TestPhase10ImmutableHistory:
 
         r = client.post(
             "/v1/reconciliation/runs",
-            json={"period_from": "2026-01-01", "period_to": "2026-01-31", "force": True},
+            json={"book_opening": "0", "period_from": "2026-01-01", "period_to": "2026-01-31", "force": True},
             headers=headers
         )
         run_id = r.json()["run_id"]

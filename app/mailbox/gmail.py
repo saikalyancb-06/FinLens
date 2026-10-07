@@ -17,6 +17,7 @@ import httpx
 from app.mailbox.base import EmailProvider
 from app.mailbox.criteria import SearchCriteria
 from app.mailbox.errors import (
+    ConnectionConfigurationError,
     AuthenticationExpired,
     AuthenticationRevoked,
     InsufficientPermissions,
@@ -154,6 +155,16 @@ class GmailProvider(EmailProvider):
                     provider="gmail",
                 )
             raise AuthenticationRevoked("Gmail refused the request (403).", provider="gmail")
+        if res.status_code == 400 and ("failedprecondition" in res.text.lower().replace("_", "")
+                                       or "mail service not enabled" in res.text.lower()):
+            # A Google account with no Gmail behind it: e.g. an address at a
+            # company whose mail is elsewhere, registered as a Google account.
+            raise ConnectionConfigurationError(
+                "This Google account has no Gmail mailbox. If your company's mail "
+                "is on Microsoft 365, connect it with Microsoft; otherwise use "
+                "'Other email provider'.",
+                provider="gmail",
+            )
         if res.status_code == 404:
             raise MessageNotFound("The Gmail message or attachment no longer exists.",
                                   provider="gmail")
@@ -166,6 +177,11 @@ class GmailProvider(EmailProvider):
 
     async def authenticate(self) -> None:
         await self._get(f"{API_BASE}/profile")
+
+    async def check_mailbox(self) -> None:
+        """Prove there is a Gmail mailbox this token can read."""
+        await self._get(f"{API_BASE}/profile")
+        await self._get(f"{API_BASE}/messages", params={"maxResults": 1})
 
     async def refresh_authentication(self) -> Optional[dict]:
         from app.mailbox.oauth.google import google_oauth_client

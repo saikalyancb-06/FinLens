@@ -96,7 +96,8 @@ class MicrosoftOAuthClient(OAuthClient):
 
     # ---- flow ------------------------------------------------------------
 
-    def authorization_url(self, state: str, redirect_uri: Optional[str] = None) -> str:
+    def authorization_url(self, state: str, redirect_uri: Optional[str] = None,
+                          login_hint: Optional[str] = None) -> str:
         params = {
             "client_id": self.client_id,
             "response_type": "code",
@@ -109,6 +110,10 @@ class MicrosoftOAuthClient(OAuthClient):
             # screen on a returning user buys nothing but friction.
             "prompt": "select_account",
         }
+        if login_hint:
+            # Opens the sign-in page on the address the user typed, so the
+            # account that is authorised is the mailbox they meant.
+            params["login_hint"] = login_hint.strip()
         return f"{self.authorization_endpoint}?{urllib.parse.urlencode(params)}"
 
     async def exchange_code(self, code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:

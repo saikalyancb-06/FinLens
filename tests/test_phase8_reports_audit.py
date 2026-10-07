@@ -544,7 +544,7 @@ class TestReconciliationExport:
 
         # Create a run as User A
         rA = client.post("/v1/reconciliation/runs", json={
-            "period_from": "2026-08-01",
+            "book_opening": "0", "period_from": "2026-08-01",
             "period_to": "2026-08-31",
             "force": True
         }, headers=hA)
@@ -562,7 +562,7 @@ class TestReconciliationExport:
         headers = register_and_login(client, "recon_export_fields@phase8.test")
 
         r_run = client.post("/v1/reconciliation/runs", json={
-            "period_from": "2026-08-01",
+            "book_opening": "0", "period_from": "2026-08-01",
             "period_to": "2026-08-31",
             "force": True
         }, headers=headers)

@@ -7,7 +7,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, Query, Response, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, extract
+from sqlalchemy import func, extract, or_
 
 from app.database.session import get_db
 from app.services.cache import cache
@@ -279,18 +279,20 @@ def _filter_export_txns(
             query = query.filter(Transaction.txn_date <= e_date)
         except ValueError:
             pass
+    # A malformed id is an error, not "no filter": silently dropping it
+    # exported the whole ledger under a file the user believed was filtered.
     if entity_id:
         try:
             target_ent = uuid.UUID(entity_id)
-            query = query.filter(entity_scope(target_ent))
         except ValueError:
-            pass
+            raise HTTPException(status_code=400, detail="Invalid entity_id format")
+        query = query.filter(entity_scope(target_ent))
     if account_id:
         try:
             target_acc = uuid.UUID(account_id)
-            query = query.filter(Transaction.account_id == target_acc)
         except ValueError:
-            pass
+            raise HTTPException(status_code=400, detail="Invalid account_id format")
+        query = query.filter(Transaction.account_id == target_acc)
     return query.order_by(Transaction.txn_date.desc()).all()
 
 
@@ -594,13 +596,26 @@ def compute_treasury_overview(
     if entities:
         for ent in entities:
             ent_accs = [a for a in all_accounts if a.entity_id == ent.id]
+            # With an account selected, an entity that does not hold it is out
+            # of scope. Left in, its bucket fell through to the entity-wide
+            # query below and added every other account's money to a report
+            # that said it showed one account.
+            if account_id and not ent_accs:
+                continue
             entity_buckets.append({
                 "id": str(ent.id),
                 "name": ent.name,
                 "accounts": ent_accs
             })
 
-    unassigned_accs = [a for a in all_accounts if a.entity_id is None]
+    # Accounts with no entity, or filed under an entity that is not listed
+    # (inactive), still belong in an unfiltered report: every other screen
+    # counts them, so leaving them out made the group totals disagree.
+    listed_entity_ids = {e.id for e in entities}
+    # With an entity selected, unassigned accounts are by definition outside it.
+    unassigned_accs = [] if entity_id else [
+        a for a in all_accounts
+        if a.entity_id is None or a.entity_id not in listed_entity_ids]
     if unassigned_accs or not entity_buckets:
         if not entity_buckets and not unassigned_accs:
             entity_buckets.append({
@@ -629,15 +644,24 @@ def compute_treasury_overview(
 
     import uuid as uuid_mod
 
+    # The union of every bucket's population. Trend, previous-period
+    # comparison, runway and forecast are computed over THIS, so they describe
+    # the same entity/account selection as the totals above them.
+    scope_predicates = []
+
     for bucket in entity_buckets:
         acc_ids = [a.id for a in bucket["accounts"]]
 
         txns_q = _active_txns(db, user_id)
         if acc_ids:
-            txns_q = txns_q.filter(Transaction.account_id.in_(acc_ids))
+            pred = Transaction.account_id.in_(acc_ids)
+            txns_q = txns_q.filter(pred)
+            scope_predicates.append(pred)
         elif bucket["id"] not in ("default", "unassigned"):
             try:
-                txns_q = txns_q.filter(entity_scope(uuid_mod.UUID(bucket["id"])))
+                pred = entity_scope(uuid_mod.UUID(bucket["id"]))
+                txns_q = txns_q.filter(pred)
+                scope_predicates.append(pred)
             except ValueError:
                 # An unparseable bucket id must not silently widen the query to
                 # the whole ledger — scope it to nothing instead.
@@ -652,6 +676,8 @@ def compute_treasury_overview(
                 # An explicit filter was requested but resolved to no accounts,
                 # so the correct answer is an empty bucket, not everything.
                 txns_q = txns_q.filter(False)
+            else:
+                scope_predicates.append(Transaction.account_id == None)
 
         opening_paise = 0
         prior_txns = []
@@ -843,14 +869,15 @@ def compute_treasury_overview(
     group_net_flow_paise = group_inflows_paise - group_outflows_paise
     group_closing_paise = group_opening_paise + group_net_flow_paise
 
-    # All active non-superseded transactions for historical calculations and forecasting
-    all_active_txns = _active_txns(db, user_id).all()
+    # Active transactions of the selected scope, for trend, comparison,
+    # runway and forecast. Without a filter that is the whole ledger, as before.
+    scope_q = _active_txns(db, user_id)
+    if entity_id or account_id:
+        scope_q = scope_q.filter(or_(*scope_predicates)) if scope_predicates else scope_q.filter(False)
+    all_active_txns = scope_q.all()
 
-    span = db.query(
+    span = scope_q.with_entities(
         func.min(Transaction.txn_date), func.max(Transaction.txn_date)
-    ).filter(
-        Transaction.user_id == user_id,
-        Transaction.superseded_by_id.is_(None),
     ).first()
     first_txn, last_txn = (span or (None, None))
     history_days = max(1, (last_txn - first_txn).days) if (first_txn and last_txn) else 30
@@ -861,7 +888,7 @@ def compute_treasury_overview(
     prev_outflows_paise = 0
     prev_txns = []
     if resolved.prev_start and resolved.prev_end:
-        prev_q = _active_txns(db, user_id).filter(
+        prev_q = scope_q.filter(
             Transaction.txn_date >= resolved.prev_start,
             Transaction.txn_date <= resolved.prev_end,
         )
